@@ -35,4 +35,4 @@ containing image sequences. It is designed to be fast and lightweight, with a fo
 on usability and a clean interface.
 """
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"

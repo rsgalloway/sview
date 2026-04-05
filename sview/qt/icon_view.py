@@ -43,16 +43,19 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QStyle,
     QVBoxLayout,
     QWidget,
 )
 
 from sview.model import BrowserItem, ItemType
+from sview.qt.icons import browser_item_icon
 
 
 class ContentsIconView(QListWidget):
     context_requested = Signal(object, object)
+    filter_text_typed = Signal(str)
+    filter_backspace_requested = Signal()
+    filter_clear_requested = Signal()
     CARD_WIDTH = 270
     CARD_HEIGHT = 88
 
@@ -63,8 +66,9 @@ class ContentsIconView(QListWidget):
         self.setMovement(QListWidget.Movement.Static)
         self.setWrapping(True)
         self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        self.setSpacing(14)
-        self.setIconSize(QSize(44, 44))
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setSpacing(12)
+        self.setIconSize(QSize(52, 52))
         self.setGridSize(QSize(self.CARD_WIDTH, self.CARD_HEIGHT))
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._emit_context_request)
@@ -103,25 +107,24 @@ class ContentsIconView(QListWidget):
             self.setCurrentItem(item)
         self.context_requested.emit(browser_item, self.viewport().mapToGlobal(position))
 
+    def keyPressEvent(self, event) -> None:
+        if self._handle_filter_key(event):
+            return
+        super().keyPressEvent(event)
+
     def _icon(self, item: BrowserItem):
-        if item.item_type is ItemType.DIRECTORY:
-            return self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
-        if item.item_type is ItemType.SEQUENCE:
-            return self.style().standardIcon(
-                QStyle.StandardPixmap.SP_FileDialogDetailedView
-            )
-        return self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+        return browser_item_icon(item, size=52)
 
     def _build_card(self, item: BrowserItem) -> QWidget:
         card = QWidget()
         card.setObjectName("iconCard")
         layout = QHBoxLayout(card)
         layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(12)
+        layout.setSpacing(14)
 
         icon_label = QLabel()
         icon_label.setPixmap(self._icon(item).pixmap(self.iconSize()))
-        icon_label.setFixedSize(48, 48)
+        icon_label.setFixedSize(56, 56)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         name_label = QLabel(item.display_name)
@@ -182,3 +185,29 @@ class ContentsIconView(QListWidget):
         if timestamp <= 0:
             return ""
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+
+    def _handle_filter_key(self, event) -> bool:
+        if event.modifiers() & (
+            Qt.KeyboardModifier.ControlModifier
+            | Qt.KeyboardModifier.AltModifier
+            | Qt.KeyboardModifier.MetaModifier
+        ):
+            return False
+        if event.key() == Qt.Key.Key_Backspace:
+            self.filter_backspace_requested.emit()
+            event.accept()
+            return True
+        if event.key() == Qt.Key.Key_Delete:
+            self.filter_clear_requested.emit()
+            event.accept()
+            return True
+        if event.key() == Qt.Key.Key_Escape:
+            self.filter_clear_requested.emit()
+            event.accept()
+            return True
+        text = event.text()
+        if text and text.isprintable():
+            self.filter_text_typed.emit(text)
+            event.accept()
+            return True
+        return False

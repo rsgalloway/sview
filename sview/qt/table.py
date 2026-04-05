@@ -39,14 +39,18 @@ from datetime import datetime
 
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QHeaderView, QStyle, QTableWidget, QTableWidgetItem
+from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
 from sview.model import BrowserItem, ItemType
+from sview.qt.icons import browser_item_icon
 
 
 class ContentsTable(QTableWidget):
     RENDER_BATCH_SIZE = 100
     context_requested = Signal(object, object)
+    filter_text_typed = Signal(str)
+    filter_backspace_requested = Signal()
+    filter_clear_requested = Signal()
 
     HEADERS = [
         "Name",
@@ -79,7 +83,7 @@ class ContentsTable(QTableWidget):
         self.setColumnWidth(6, 140)
         self.setShowGrid(False)
         self.setAlternatingRowColors(False)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setWordWrap(False)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._emit_context_request)
@@ -174,14 +178,13 @@ class ContentsTable(QTableWidget):
             self.selectRow(table_item.row())
         self.context_requested.emit(item, self.viewport().mapToGlobal(position))
 
+    def keyPressEvent(self, event) -> None:
+        if self._handle_filter_key(event):
+            return
+        super().keyPressEvent(event)
+
     def _item_icon(self, item: BrowserItem):
-        if item.item_type is ItemType.DIRECTORY:
-            return self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
-        if item.item_type is ItemType.SEQUENCE:
-            return self.style().standardIcon(
-                QStyle.StandardPixmap.SP_FileDialogDetailedView
-            )
-        return self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+        return browser_item_icon(item, size=18)
 
     @staticmethod
     def _type_label(item: BrowserItem) -> str:
@@ -221,3 +224,29 @@ class ContentsTable(QTableWidget):
         if timestamp <= 0:
             return ""
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+
+    def _handle_filter_key(self, event) -> bool:
+        if event.modifiers() & (
+            Qt.KeyboardModifier.ControlModifier
+            | Qt.KeyboardModifier.AltModifier
+            | Qt.KeyboardModifier.MetaModifier
+        ):
+            return False
+        if event.key() == Qt.Key.Key_Backspace:
+            self.filter_backspace_requested.emit()
+            event.accept()
+            return True
+        if event.key() == Qt.Key.Key_Delete:
+            self.filter_clear_requested.emit()
+            event.accept()
+            return True
+        if event.key() == Qt.Key.Key_Escape:
+            self.filter_clear_requested.emit()
+            event.accept()
+            return True
+        text = event.text()
+        if text and text.isprintable():
+            self.filter_text_typed.emit(text)
+            event.accept()
+            return True
+        return False

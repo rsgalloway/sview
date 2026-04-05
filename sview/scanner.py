@@ -131,7 +131,7 @@ class DirectoryScanner:
         for entry in entries:
             self._raise_if_cancelled(cancel_check)
             try:
-                is_directory = entry.is_dir(follow_symlinks=False)
+                is_directory = entry.is_dir()
             except OSError:
                 continue
             items.append(

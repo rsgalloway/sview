@@ -54,10 +54,12 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QStackedWidget,
+    QProgressBar,
     QStyle,
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QSizePolicy,
 )
 
 from sview import __version__
@@ -113,10 +115,24 @@ class MainWindow(QMainWindow):
 
         self._filter_input = QLineEdit()
         self._filter_input.setPlaceholderText("Search")
+        self._filter_input.setObjectName("searchInput")
+        self._filter_input.setMinimumWidth(360)
+        self._filter_input.setMaximumWidth(460)
+        self._filter_input.setFixedHeight(34)
+        self._clear_filter_action = self._filter_input.addAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_LineEditClearButton),
+            QLineEdit.ActionPosition.TrailingPosition,
+        )
+        self._clear_filter_action.setVisible(False)
 
         self._table = ContentsTable()
         self._icon_view = ContentsIconView()
         self._center_stack = QStackedWidget()
+        self._breadcrumb_bar = QWidget()
+        self._breadcrumb_bar.setObjectName("breadcrumbBar")
+        self._breadcrumb_layout = QHBoxLayout(self._breadcrumb_bar)
+        self._breadcrumb_layout.setContentsMargins(0, 0, 0, 0)
+        self._breadcrumb_layout.setSpacing(2)
         self._inspector = InspectorPanel()
         self._tree_title = QLabel("Folders")
         self._tree_toggle = QToolButton()
@@ -126,16 +142,18 @@ class MainWindow(QMainWindow):
         self._sidebar_restore_width = (
             self._coerce_int(self._ui_state.get("sidebar_width")) or self.SIDEBAR_WIDTH
         )
+        self._loading_overlay = QLabel("Loading…")
+        self._loading_overlay.setObjectName("loadingOverlay")
+        self._loading_spinner = QProgressBar()
+        self._loading_spinner.setObjectName("loadingSpinner")
+        self._loading_spinner.setRange(0, 0)
+        self._loading_spinner.setTextVisible(False)
+        self._loading_spinner.hide()
+        self._loading_overlay.hide()
 
-        self._progress_timer = QTimer(self)
-        self._busy_timer = QTimer(self)
-        self._busy_timer.setInterval(30)
-        self._busy_timer.timeout.connect(self._advance_busy_indicator)
         self._scan_timeout_timer = QTimer(self)
         self._scan_timeout_timer.setSingleShot(True)
         self._scan_timeout_timer.timeout.connect(self._handle_scan_timeout)
-        self._busy_value = 0
-        self._busy_direction = 1
 
         self._build_toolbar()
         self._build_menu_bar()
@@ -159,36 +177,42 @@ class MainWindow(QMainWindow):
         self.addAction(self._refresh_action)
 
         self._back_button = QPushButton()
+        self._back_button.setObjectName("navButton")
         self._back_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack)
         )
         self._back_button.setToolTip("Back")
         self._back_button.setFixedWidth(28)
         self._home_button = QPushButton()
+        self._home_button.setObjectName("navButton")
         self._home_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon)
         )
         self._home_button.setToolTip("Home")
         self._home_button.setFixedWidth(28)
         self._up_button = QPushButton()
+        self._up_button.setObjectName("navButton")
         self._up_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp)
         )
         self._up_button.setToolTip("Up")
         self._up_button.setFixedWidth(28)
         self._open_button = QPushButton()
+        self._open_button.setObjectName("navButton")
         self._open_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
         )
         self._open_button.setToolTip("Open Folder")
         self._open_button.setFixedWidth(32)
         self._refresh_button = QPushButton()
+        self._refresh_button.setObjectName("navButton")
         self._refresh_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
         )
         self._refresh_button.setToolTip("Refresh")
         self._refresh_button.setFixedWidth(32)
         self._content_mode_toggle = QPushButton()
+        self._content_mode_toggle.setObjectName("toolbarToggle")
         self._content_mode_toggle.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
         )
@@ -197,6 +221,7 @@ class MainWindow(QMainWindow):
         self._content_mode_toggle.setChecked(True)
         self._content_mode_toggle.setFixedWidth(32)
         self._layout_mode_toggle = QPushButton()
+        self._layout_mode_toggle.setObjectName("toolbarToggle")
         self._layout_mode_toggle.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
         )
@@ -207,19 +232,13 @@ class MainWindow(QMainWindow):
         )
         self._layout_mode_toggle.setFixedWidth(32)
         self._stop_button = QPushButton()
+        self._stop_button.setObjectName("toolbarToggle")
         self._stop_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserStop)
         )
         self._stop_button.setToolTip("Stop")
         self._stop_button.setFixedWidth(32)
         self._stop_button.setEnabled(False)
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setValue(0)
-        self._progress_bar.setMaximumWidth(84)
-        self._progress_bar.setFixedHeight(12)
-        self._progress_bar.setTextVisible(False)
-        self._progress_bar.hide()
 
     def _build_menu_bar(self) -> None:
         menu_bar = self.menuBar()
@@ -243,23 +262,24 @@ class MainWindow(QMainWindow):
         center = QWidget()
         root_layout = QVBoxLayout(center)
         root_layout.setContentsMargins(8, 8, 8, 8)
-        root_layout.setSpacing(6)
+        root_layout.setSpacing(4)
 
         toolbar_row = QHBoxLayout()
-        toolbar_row.setSpacing(6)
+        toolbar_row.setSpacing(4)
         toolbar_row.addWidget(self._back_button)
         toolbar_row.addWidget(self._up_button)
         toolbar_row.addWidget(self._home_button)
         toolbar_row.addWidget(self._open_button)
         toolbar_row.addWidget(self._refresh_button)
-        toolbar_row.addSpacing(6)
+        toolbar_row.addSpacing(4)
         toolbar_row.addWidget(self._content_mode_toggle)
-        toolbar_row.addSpacing(6)
+        toolbar_row.addSpacing(4)
         toolbar_row.addWidget(self._layout_mode_toggle)
         toolbar_row.addWidget(self._stop_button)
-        toolbar_row.addWidget(self._progress_bar)
-        toolbar_row.addStretch(1)
-        self._filter_input.setMaximumWidth(320)
+        self._breadcrumb_bar.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        toolbar_row.addWidget(self._breadcrumb_bar, 1)
         toolbar_row.addWidget(self._filter_input)
         root_layout.addLayout(toolbar_row)
 
@@ -294,27 +314,35 @@ class MainWindow(QMainWindow):
         self._center_stack.setCurrentWidget(
             self._icon_view if not self._layout_mode_toggle.isChecked() else self._table
         )
+        center_panel = QWidget()
+        center_layout = QVBoxLayout(center_panel)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(0)
+        center_layout.addWidget(self._center_stack, 1)
 
         splitter.addWidget(sidebar)
-        splitter.addWidget(self._center_stack)
+        splitter.addWidget(center_panel)
         splitter.addWidget(self._inspector)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 5)
         splitter.setStretchFactor(2, 3)
         self._main_splitter = splitter
         splitter.setCollapsible(0, True)
-        splitter.setSizes(
-            self._coerce_splitter_sizes(
-                self._ui_state.get("main_splitter_sizes"),
-                [self._sidebar_restore_width, 900, 0],
-            )
+        initial_sizes = self._coerce_splitter_sizes(
+            self._ui_state.get("main_splitter_sizes"),
+            [self._sidebar_restore_width, 900, 0],
         )
+        if self._sidebar_expanded and initial_sizes[0] <= 0:
+            initial_sizes[0] = self._sidebar_restore_width
+        splitter.setSizes(initial_sizes)
         if not self._sidebar_expanded:
             self._apply_sidebar_state(False)
         root_layout.addWidget(splitter, 1)
 
         self.setCentralWidget(center)
         center.setObjectName("mainContent")
+        self.statusBar().addPermanentWidget(self._loading_overlay)
+        self.statusBar().addPermanentWidget(self._loading_spinner)
         self.statusBar().showMessage("Ready")
         width = self._coerce_int(self._ui_state.get("window_width"))
         height = self._coerce_int(self._ui_state.get("window_height"))
@@ -340,12 +368,20 @@ class MainWindow(QMainWindow):
         self._stop_button.clicked.connect(self._cancel_scan)
         self._content_mode_toggle.toggled.connect(self._toggle_content_mode)
         self._filter_input.textChanged.connect(self._apply_filter)
+        self._filter_input.textChanged.connect(self._update_filter_clear_action)
+        self._clear_filter_action.triggered.connect(self._clear_filter_text)
         self._table.itemSelectionChanged.connect(self._sync_inspector)
         self._table.itemDoubleClicked.connect(self._activate_selected_item)
         self._table.context_requested.connect(self._show_item_context_menu)
+        self._table.filter_text_typed.connect(self._append_filter_text)
+        self._table.filter_backspace_requested.connect(self._delete_filter_text)
+        self._table.filter_clear_requested.connect(self._clear_filter_text)
         self._icon_view.itemSelectionChanged.connect(self._sync_inspector)
         self._icon_view.itemActivated.connect(self._activate_selected_item)
         self._icon_view.context_requested.connect(self._show_item_context_menu)
+        self._icon_view.filter_text_typed.connect(self._append_filter_text)
+        self._icon_view.filter_backspace_requested.connect(self._delete_filter_text)
+        self._icon_view.filter_clear_requested.connect(self._clear_filter_text)
         self._tree.selectionModel().selectionChanged.connect(
             self._handle_tree_selection
         )
@@ -439,6 +475,7 @@ class MainWindow(QMainWindow):
             self._table if detail_view else self._icon_view
         )
         self._save_ui_state()
+        QTimer.singleShot(0, self._focus_active_browser)
 
     def _handle_tree_selection(self) -> None:
         index = self._tree.currentIndex()
@@ -585,7 +622,10 @@ class MainWindow(QMainWindow):
             self._push_history(str(result.path))
         self._active_request = None
         self._sync_tree_to_path(str(result.path))
-        self._apply_filter(self._filter_input.text())
+        self._update_breadcrumbs(result.path)
+        self._filter_input.clear()
+        self._apply_filter("")
+        QTimer.singleShot(0, self._focus_active_browser)
         self._drain_pending_request()
 
     def _handle_failed_scan(self, error_message: str) -> None:
@@ -654,6 +694,32 @@ class MainWindow(QMainWindow):
         self._icon_view.set_items(filtered)
         self._inspector.clear_details()
         self._update_status_bar()
+
+    def _append_filter_text(self, text: str) -> None:
+        if not text or not self._filter_input.isEnabled():
+            return
+        self._filter_input.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self._filter_input.setText(self._filter_input.text() + text)
+        self._filter_input.setCursorPosition(len(self._filter_input.text()))
+
+    def _delete_filter_text(self) -> None:
+        if not self._filter_input.isEnabled():
+            return
+        current = self._filter_input.text()
+        if not current:
+            return
+        self._filter_input.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self._filter_input.setText(current[:-1])
+        self._filter_input.setCursorPosition(len(self._filter_input.text()))
+
+    def _clear_filter_text(self) -> None:
+        if not self._filter_input.isEnabled() or not self._filter_input.text():
+            return
+        self._filter_input.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self._filter_input.clear()
+
+    def _update_filter_clear_action(self, text: str) -> None:
+        self._clear_filter_action.setVisible(bool(text))
 
     def _sync_inspector(self) -> None:
         item = self._current_browser_item()
@@ -763,10 +829,10 @@ class MainWindow(QMainWindow):
                 and self._controller.expanded_sequence.path == item.path
                 else "Expand Sequence"
             )
-            menu.addSeparator()
-            sstat_action = menu.addAction("sstat")
-            scopy_action = menu.addAction("scopy...")
-            smove_action = menu.addAction("smove...")
+            sequence_menu = menu.addMenu("Sequence")
+            sstat_action = sequence_menu.addAction("sstat")
+            scopy_action = sequence_menu.addAction("scopy...")
+            smove_action = sequence_menu.addAction("smove...")
 
         menu.addSeparator()
         properties_action = menu.addAction("Properties")
@@ -926,16 +992,12 @@ class MainWindow(QMainWindow):
         self._filter_input.setEnabled(not loading)
         self._tree.setEnabled(not loading)
         self._table.setEnabled(not loading)
+        self._icon_view.setEnabled(not loading)
         self._stop_button.setEnabled(loading)
-        self._progress_bar.setVisible(loading)
+        self._loading_spinner.setVisible(loading)
+        self._loading_overlay.setVisible(loading)
         if loading:
-            self._busy_value = 0
-            self._busy_direction = 1
-            self._progress_bar.setValue(self._busy_value)
-            self._busy_timer.start()
-        else:
-            self._busy_timer.stop()
-            self._progress_bar.setValue(0)
+            self._loading_overlay.setText("Loading…")
         if loading and path is not None:
             self.statusBar().showMessage(f"Loading {path}...")
 
@@ -1030,16 +1092,6 @@ class MainWindow(QMainWindow):
                 frames.append(coerced)
         return frames
 
-    def _advance_busy_indicator(self) -> None:
-        self._busy_value += self._busy_direction * 4
-        if self._busy_value >= 100:
-            self._busy_value = 100
-            self._busy_direction = -1
-        elif self._busy_value <= 0:
-            self._busy_value = 0
-            self._busy_direction = 1
-        self._progress_bar.setValue(self._busy_value)
-
     def _close_inspector(self) -> None:
         if self._main_splitter is None:
             return
@@ -1086,16 +1138,18 @@ class MainWindow(QMainWindow):
 
     def _save_ui_state(self) -> None:
         sidebar_width = self._sidebar_restore_width
+        splitter_sizes = [self.SIDEBAR_WIDTH, 900, 0]
         if self._main_splitter is not None:
             sizes = self._main_splitter.sizes()
+            splitter_sizes = list(sizes)
             if sizes and sizes[0] > 0:
                 sidebar_width = sizes[0]
+            elif self._sidebar_expanded:
+                splitter_sizes[0] = sidebar_width
         state = {
             "window_width": self.width(),
             "window_height": self.height(),
-            "main_splitter_sizes": self._main_splitter.sizes()
-            if self._main_splitter is not None
-            else [self.SIDEBAR_WIDTH, 900, 0],
+            "main_splitter_sizes": splitter_sizes,
             "center_view": "icons"
             if not self._layout_mode_toggle.isChecked()
             else "details",
@@ -1124,6 +1178,46 @@ class MainWindow(QMainWindow):
             return self._icon_view.current_browser_item()
         return self._table.current_browser_item()
 
+    def _focus_active_browser(self) -> None:
+        widget = self._center_stack.currentWidget()
+        if widget is not None and widget.isEnabled():
+            widget.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _update_breadcrumbs(self, path: Path) -> None:
+        while self._breadcrumb_layout.count():
+            item = self._breadcrumb_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        normalized = Path(path)
+        parts = [normalized.anchor] if normalized.anchor else []
+        parts.extend(part for part in normalized.parts[len(parts) :] if part)
+
+        current_path = Path(parts[0]) if parts else normalized
+        for index, part in enumerate(parts):
+            if index > 0:
+                separator = QLabel("/")
+                separator.setObjectName("breadcrumbSeparator")
+                self._breadcrumb_layout.addWidget(separator)
+                current_path = current_path / part
+
+            button = QToolButton()
+            button.setObjectName("breadcrumbButton")
+            button.setAutoRaise(True)
+            button.setText(
+                "Home" if current_path == Path.home() else part.rstrip("/") or "/"
+            )
+            button.setToolTip(str(current_path))
+            button.clicked.connect(
+                lambda _checked=False, target=str(
+                    current_path
+                ): self._request_directory(target, add_to_history=True)
+            )
+            self._breadcrumb_layout.addWidget(button)
+
+        self._breadcrumb_layout.addStretch(1)
+
     def _toggle_sidebar(self, expanded: bool) -> None:
         self._apply_sidebar_state(expanded)
         self._save_ui_state()
@@ -1147,7 +1241,11 @@ class MainWindow(QMainWindow):
             return
         if expanded:
             target = min(self.SIDEBAR_WIDTH, max(220, self._sidebar_restore_width))
-            sizes[1] = max(0, sizes[1] - target)
+            current_sidebar = sizes[0]
+            if current_sidebar <= 0:
+                sizes[1] = max(0, sizes[1] - target)
+            else:
+                sizes[1] = max(0, sizes[1] + current_sidebar - target)
             sizes[0] = target
         else:
             if sizes[0] > 0:
