@@ -81,7 +81,10 @@ class DirectoryScannerTests(unittest.TestCase):
             target = root / "target"
             target.mkdir()
             link = root / "linked-target"
-            link.symlink_to(target, target_is_directory=True)
+            try:
+                link.symlink_to(target, target_is_directory=True)
+            except (NotImplementedError, OSError):
+                self.skipTest("Symlinks are not available in this environment.")
 
             result = DirectoryScanner().scan(root)
 

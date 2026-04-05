@@ -992,6 +992,7 @@ class MainWindow(QMainWindow):
         self._filter_input.setEnabled(not loading)
         self._tree.setEnabled(not loading)
         self._table.setEnabled(not loading)
+        self._icon_view.setEnabled(not loading)
         self._stop_button.setEnabled(loading)
         self._loading_spinner.setVisible(loading)
         self._loading_overlay.setVisible(loading)
@@ -1196,7 +1197,7 @@ class MainWindow(QMainWindow):
         current_path = Path(parts[0]) if parts else normalized
         for index, part in enumerate(parts):
             if index > 0:
-                separator = QLabel("›")
+                separator = QLabel("/")
                 separator.setObjectName("breadcrumbSeparator")
                 self._breadcrumb_layout.addWidget(separator)
                 current_path = current_path / part

@@ -239,7 +239,7 @@ def _apply_dark_theme(app: QApplication) -> None:
             background: transparent;
             border: 0;
             color: #cfd8e0;
-            padding: 3px 6px;
+            padding: 2px 3px;
             border-radius: 4px;
         }
         QToolButton#breadcrumbButton:hover {
@@ -248,7 +248,7 @@ def _apply_dark_theme(app: QApplication) -> None:
         }
         QLabel#breadcrumbSeparator {
             color: #6f7e8b;
-            padding: 0 2px;
+            padding: 0;
         }
         QLabel#loadingOverlay {
             color: #8b99a5;

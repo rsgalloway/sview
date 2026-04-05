@@ -37,7 +37,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtGui import QImageReader, QPixmap
 from PySide6.QtWidgets import (
     QFormLayout,
@@ -146,6 +146,7 @@ class InspectorPanel(QWidget):
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.setWidget(body)
+        self._scroll.viewport().installEventFilter(self)
         layout.addWidget(self._scroll, 1)
         self.clear_details()
 
@@ -212,6 +213,11 @@ class InspectorPanel(QWidget):
         super().resizeEvent(event)
         self._apply_thumbnail_pixmap()
 
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._scroll.viewport() and event.type() == QEvent.Type.Resize:
+            self._apply_thumbnail_pixmap()
+        return super().eventFilter(watched, event)
+
     @staticmethod
     def _type_text(item: BrowserItem) -> str:
         if item.item_type is ItemType.SEQUENCE:
@@ -258,39 +264,39 @@ class InspectorPanel(QWidget):
             self._thumbnail.setText("No preview")
             return
 
-        reader = QImageReader(preview_path)
-        if not reader.canRead():
-            self._thumbnail_pixmap = None
-            self._thumbnail_source_path = preview_path
-            self._thumbnail.setPixmap(QPixmap())
-            self._thumbnail.setText("Preview unavailable")
-            return
-
-        pixmap = QPixmap.fromImageReader(reader)
-        if pixmap.isNull():
-            self._thumbnail_pixmap = None
-            self._thumbnail_source_path = preview_path
-            self._thumbnail.setPixmap(QPixmap())
-            self._thumbnail.setText("Preview unavailable")
-            return
-
-        self._thumbnail_pixmap = pixmap
         self._thumbnail_source_path = preview_path
         self._apply_thumbnail_pixmap()
 
     def _apply_thumbnail_pixmap(self) -> None:
-        if self._thumbnail_pixmap is None:
+        if self._thumbnail_source_path is None:
             return
         available_width = max(120, self._scroll.viewport().width() - 28)
-        scaled = self._thumbnail_pixmap.scaledToWidth(
-            available_width,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        frame_height = max(self.MIN_THUMBNAIL_HEIGHT, scaled.height() + 12)
+        reader = QImageReader(self._thumbnail_source_path)
+        reader.setAutoTransform(True)
+        if not reader.canRead():
+            self._thumbnail_pixmap = None
+            self._thumbnail.setPixmap(QPixmap())
+            self._thumbnail.setText("Preview unavailable")
+            return
+        source_size = reader.size()
+        if source_size.isValid() and source_size.width() > 0:
+            target_height = max(
+                self.MIN_THUMBNAIL_HEIGHT,
+                int(source_size.height() * (available_width / source_size.width())),
+            )
+            reader.setScaledSize(QSize(available_width, target_height))
+        pixmap = QPixmap.fromImageReader(reader)
+        if pixmap.isNull():
+            self._thumbnail_pixmap = None
+            self._thumbnail.setPixmap(QPixmap())
+            self._thumbnail.setText("Preview unavailable")
+            return
+        self._thumbnail_pixmap = pixmap
+        frame_height = max(self.MIN_THUMBNAIL_HEIGHT, pixmap.height() + 12)
         self._thumbnail.setMinimumHeight(frame_height)
         self._thumbnail.setMaximumHeight(frame_height)
         self._thumbnail.setText("")
-        self._thumbnail.setPixmap(scaled)
+        self._thumbnail.setPixmap(pixmap)
 
     @staticmethod
     def _preview_path(item: BrowserItem) -> str | None:

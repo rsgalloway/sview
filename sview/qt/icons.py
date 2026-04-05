@@ -35,6 +35,8 @@ Contains lightweight custom icons used throughout the sview UI.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 
@@ -49,6 +51,7 @@ def browser_item_icon(item: BrowserItem, size: int = 18) -> QIcon:
     return _file_icon(size)
 
 
+@lru_cache(maxsize=12)
 def _folder_icon(size: int) -> QIcon:
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -71,6 +74,7 @@ def _folder_icon(size: int) -> QIcon:
     return QIcon(pixmap)
 
 
+@lru_cache(maxsize=12)
 def _file_icon(size: int) -> QIcon:
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -100,6 +104,7 @@ def _file_icon(size: int) -> QIcon:
     return QIcon(pixmap)
 
 
+@lru_cache(maxsize=12)
 def _sequence_icon(size: int) -> QIcon:
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
