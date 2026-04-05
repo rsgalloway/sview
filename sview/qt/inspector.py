@@ -38,11 +38,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QImageReader, QPixmap
 from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QStyle,
     QVBoxLayout,
     QWidget,
@@ -52,11 +55,15 @@ from sview.model import BrowserItem, ItemType
 
 
 class InspectorPanel(QWidget):
+    MIN_THUMBNAIL_HEIGHT = 140
+
     def __init__(self) -> None:
         super().__init__()
         self._title = QLabel("Properties")
         self._subtitle = QLabel("Select an item to inspect")
         self._current_item: BrowserItem | None = None
+        self._thumbnail_pixmap: QPixmap | None = None
+        self._thumbnail_source_path: str | None = None
 
         self._type_value = QLabel("-")
         self._range_value = QLabel("-")
@@ -85,13 +92,29 @@ class InspectorPanel(QWidget):
         layout.setSpacing(6)
         self._title.setObjectName("inspectorTitle")
         self._subtitle.setObjectName("inspectorSubtitle")
+        self._thumbnail = QLabel("No preview")
+        self._thumbnail.setObjectName("inspectorThumbnail")
+        self._thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._thumbnail.setMinimumHeight(self.MIN_THUMBNAIL_HEIGHT)
+        self._thumbnail.setMaximumHeight(16777215)
+        self._thumbnail.setMinimumWidth(0)
+        self._thumbnail.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self._thumbnail.setWordWrap(True)
 
         header_row = QHBoxLayout()
         header_row.addWidget(self._title)
         header_row.addStretch(1)
         header_row.addWidget(self.close_button)
         layout.addLayout(header_row)
-        layout.addWidget(self._subtitle)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(6)
+        body_layout.addWidget(self._subtitle)
+        body_layout.addWidget(self._thumbnail)
 
         form = QFormLayout()
         form.setVerticalSpacing(4)
@@ -105,24 +128,37 @@ class InspectorPanel(QWidget):
         form.addRow("Size", self._size_value)
         form.addRow("Modified", self._modified_value)
         form.addRow("Path", self._path_value)
-        layout.addLayout(form)
-        layout.addStretch(1)
+        body_layout.addLayout(form)
 
         button_row = QHBoxLayout()
         button_row.addWidget(self.copy_path_button)
         button_row.addWidget(self.copy_pattern_button)
-        layout.addLayout(button_row)
+        body_layout.addLayout(button_row)
         metadata_row = QHBoxLayout()
         metadata_row.addWidget(self.find_missing_button)
         metadata_row.addWidget(self.get_size_button)
-        layout.addLayout(metadata_row)
-        layout.addWidget(self.expand_button)
+        body_layout.addLayout(metadata_row)
+        body_layout.addWidget(self.expand_button)
+        body_layout.addStretch(1)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setWidget(body)
+        layout.addWidget(self._scroll, 1)
         self.clear_details()
 
     def clear_details(self) -> None:
         self._title.setText("Properties")
         self._subtitle.setText("Select an item to inspect")
         self._current_item = None
+        self._thumbnail_pixmap = None
+        self._thumbnail_source_path = None
+        self._thumbnail.setPixmap(QPixmap())
+        self._thumbnail.setText("No preview")
+        self._thumbnail.setMinimumHeight(self.MIN_THUMBNAIL_HEIGHT)
+        self._thumbnail.setMaximumHeight(16777215)
         for label in (
             self._type_value,
             self._range_value,
@@ -155,6 +191,7 @@ class InspectorPanel(QWidget):
         self._size_value.setText(self._format_size(item.size_bytes))
         self._modified_value.setText(self._format_modified(item.modified_time))
         self._path_value.setText(str(Path(item.path)))
+        self._update_thumbnail(item)
 
         self.copy_path_button.setEnabled(True)
         self.copy_pattern_button.setEnabled(item.item_type is ItemType.SEQUENCE)
@@ -170,6 +207,10 @@ class InspectorPanel(QWidget):
     @property
     def current_item(self) -> BrowserItem | None:
         return self._current_item
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_thumbnail_pixmap()
 
     @staticmethod
     def _type_text(item: BrowserItem) -> str:
@@ -207,3 +248,68 @@ class InspectorPanel(QWidget):
         if timestamp <= 0:
             return "-"
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+
+    def _update_thumbnail(self, item: BrowserItem) -> None:
+        preview_path = self._preview_path(item)
+        if preview_path is None:
+            self._thumbnail_pixmap = None
+            self._thumbnail_source_path = None
+            self._thumbnail.setPixmap(QPixmap())
+            self._thumbnail.setText("No preview")
+            return
+
+        reader = QImageReader(preview_path)
+        if not reader.canRead():
+            self._thumbnail_pixmap = None
+            self._thumbnail_source_path = preview_path
+            self._thumbnail.setPixmap(QPixmap())
+            self._thumbnail.setText("Preview unavailable")
+            return
+
+        pixmap = QPixmap.fromImageReader(reader)
+        if pixmap.isNull():
+            self._thumbnail_pixmap = None
+            self._thumbnail_source_path = preview_path
+            self._thumbnail.setPixmap(QPixmap())
+            self._thumbnail.setText("Preview unavailable")
+            return
+
+        self._thumbnail_pixmap = pixmap
+        self._thumbnail_source_path = preview_path
+        self._apply_thumbnail_pixmap()
+
+    def _apply_thumbnail_pixmap(self) -> None:
+        if self._thumbnail_pixmap is None:
+            return
+        available_width = max(120, self._scroll.viewport().width() - 28)
+        scaled = self._thumbnail_pixmap.scaledToWidth(
+            available_width,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        frame_height = max(self.MIN_THUMBNAIL_HEIGHT, scaled.height() + 12)
+        self._thumbnail.setMinimumHeight(frame_height)
+        self._thumbnail.setMaximumHeight(frame_height)
+        self._thumbnail.setText("")
+        self._thumbnail.setPixmap(scaled)
+
+    @staticmethod
+    def _preview_path(item: BrowserItem) -> str | None:
+        if item.item_type is ItemType.SEQUENCE and item.child_paths:
+            candidate = Path(item.child_paths[0])
+        else:
+            candidate = Path(item.path)
+
+        if not candidate.is_file():
+            return None
+        if candidate.suffix.lower() not in {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".tif",
+            ".tiff",
+            ".bmp",
+            ".gif",
+            ".webp",
+        }:
+            return None
+        return str(candidate)

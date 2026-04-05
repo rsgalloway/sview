@@ -241,6 +241,13 @@ def _apply_dark_theme(app: QApplication) -> None:
             color: #8998a5;
             margin-bottom: 6px;
         }
+        QLabel#inspectorThumbnail {
+            background-color: #12181d;
+            border: 1px solid #202932;
+            border-radius: 6px;
+            color: #7f8d99;
+            padding: 6px;
+        }
         QWidget#iconCard {
             background-color: #182026;
             border: 1px solid #202a32;
