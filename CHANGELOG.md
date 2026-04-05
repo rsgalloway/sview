@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 - 2026-04-05
+
+- Refined the desktop UI with a darker theme, tighter toolbar, custom item icons, and cleaner loading feedback
+- Added icon and detail browsing improvements including type-to-filter, breadcrumbs, and better context menu organization
+- Enhanced the Properties panel with responsive image thumbnails, scrolling content, and on-demand sequence actions
+- Improved path handling for symlinked directories and polished overall navigation, search, and panel behavior
+
 ## 0.1.2 - 2026-04-05
 
 - Moved directory scanning into a subprocess worker for safer cancellation
