@@ -1,0 +1,17 @@
+{
+    "author": "ryan@rsg.io",
+    "targets": {
+        "bin": {
+            "source": "bin/*",
+            "destination": "{DEPLOY_ROOT}/bin/%1"
+        },
+        "lib": {
+            "source": "sview",
+            "destination": "{DEPLOY_ROOT}/lib/python/sview"
+        },
+        "env": {
+            "source": "sview.env",
+            "destination": "{DEPLOY_ROOT}/env/sview.env"
+        }
+    }
+}

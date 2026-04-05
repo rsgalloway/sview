@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sview"
+version = "0.1.0"
+description = "Sequence-aware filesystem browser"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "PySide6>=6.6",
+    "pyseq",
+]
+
+[project.urls]
+Repository = "https://github.com/rsgalloway/sview"
+
+[project.optional-dependencies]
+dev = []
+
+[project.scripts]
+sview = "sview.qt.app:main"
+
+[tool.setuptools]
+packages = ["sview", "sview.qt"]
