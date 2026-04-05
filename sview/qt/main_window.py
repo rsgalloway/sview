@@ -117,6 +117,11 @@ class MainWindow(QMainWindow):
         self._filter_input.setMinimumWidth(360)
         self._filter_input.setMaximumWidth(460)
         self._filter_input.setFixedHeight(34)
+        self._clear_filter_action = self._filter_input.addAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_LineEditClearButton),
+            QLineEdit.ActionPosition.TrailingPosition,
+        )
+        self._clear_filter_action.setVisible(False)
 
         self._table = ContentsTable()
         self._icon_view = ContentsIconView()
@@ -352,12 +357,20 @@ class MainWindow(QMainWindow):
         self._stop_button.clicked.connect(self._cancel_scan)
         self._content_mode_toggle.toggled.connect(self._toggle_content_mode)
         self._filter_input.textChanged.connect(self._apply_filter)
+        self._filter_input.textChanged.connect(self._update_filter_clear_action)
+        self._clear_filter_action.triggered.connect(self._clear_filter_text)
         self._table.itemSelectionChanged.connect(self._sync_inspector)
         self._table.itemDoubleClicked.connect(self._activate_selected_item)
         self._table.context_requested.connect(self._show_item_context_menu)
+        self._table.filter_text_typed.connect(self._append_filter_text)
+        self._table.filter_backspace_requested.connect(self._delete_filter_text)
+        self._table.filter_clear_requested.connect(self._clear_filter_text)
         self._icon_view.itemSelectionChanged.connect(self._sync_inspector)
         self._icon_view.itemActivated.connect(self._activate_selected_item)
         self._icon_view.context_requested.connect(self._show_item_context_menu)
+        self._icon_view.filter_text_typed.connect(self._append_filter_text)
+        self._icon_view.filter_backspace_requested.connect(self._delete_filter_text)
+        self._icon_view.filter_clear_requested.connect(self._clear_filter_text)
         self._tree.selectionModel().selectionChanged.connect(
             self._handle_tree_selection
         )
@@ -451,6 +464,7 @@ class MainWindow(QMainWindow):
             self._table if detail_view else self._icon_view
         )
         self._save_ui_state()
+        QTimer.singleShot(0, self._focus_active_browser)
 
     def _handle_tree_selection(self) -> None:
         index = self._tree.currentIndex()
@@ -597,7 +611,9 @@ class MainWindow(QMainWindow):
             self._push_history(str(result.path))
         self._active_request = None
         self._sync_tree_to_path(str(result.path))
-        self._apply_filter(self._filter_input.text())
+        self._filter_input.clear()
+        self._apply_filter("")
+        QTimer.singleShot(0, self._focus_active_browser)
         self._drain_pending_request()
 
     def _handle_failed_scan(self, error_message: str) -> None:
@@ -666,6 +682,32 @@ class MainWindow(QMainWindow):
         self._icon_view.set_items(filtered)
         self._inspector.clear_details()
         self._update_status_bar()
+
+    def _append_filter_text(self, text: str) -> None:
+        if not text or not self._filter_input.isEnabled():
+            return
+        self._filter_input.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self._filter_input.setText(self._filter_input.text() + text)
+        self._filter_input.setCursorPosition(len(self._filter_input.text()))
+
+    def _delete_filter_text(self) -> None:
+        if not self._filter_input.isEnabled():
+            return
+        current = self._filter_input.text()
+        if not current:
+            return
+        self._filter_input.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self._filter_input.setText(current[:-1])
+        self._filter_input.setCursorPosition(len(self._filter_input.text()))
+
+    def _clear_filter_text(self) -> None:
+        if not self._filter_input.isEnabled() or not self._filter_input.text():
+            return
+        self._filter_input.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self._filter_input.clear()
+
+    def _update_filter_clear_action(self, text: str) -> None:
+        self._clear_filter_action.setVisible(bool(text))
 
     def _sync_inspector(self) -> None:
         item = self._current_browser_item()
@@ -1137,6 +1179,11 @@ class MainWindow(QMainWindow):
         if self._center_stack.currentWidget() is self._icon_view:
             return self._icon_view.current_browser_item()
         return self._table.current_browser_item()
+
+    def _focus_active_browser(self) -> None:
+        widget = self._center_stack.currentWidget()
+        if widget is not None and widget.isEnabled():
+            widget.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _toggle_sidebar(self, expanded: bool) -> None:
         self._apply_sidebar_state(expanded)

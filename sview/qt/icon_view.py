@@ -53,6 +53,9 @@ from sview.qt.icons import browser_item_icon
 
 class ContentsIconView(QListWidget):
     context_requested = Signal(object, object)
+    filter_text_typed = Signal(str)
+    filter_backspace_requested = Signal()
+    filter_clear_requested = Signal()
     CARD_WIDTH = 270
     CARD_HEIGHT = 88
 
@@ -63,6 +66,7 @@ class ContentsIconView(QListWidget):
         self.setMovement(QListWidget.Movement.Static)
         self.setWrapping(True)
         self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setSpacing(12)
         self.setIconSize(QSize(52, 52))
         self.setGridSize(QSize(self.CARD_WIDTH, self.CARD_HEIGHT))
@@ -102,6 +106,11 @@ class ContentsIconView(QListWidget):
         if item is not None:
             self.setCurrentItem(item)
         self.context_requested.emit(browser_item, self.viewport().mapToGlobal(position))
+
+    def keyPressEvent(self, event) -> None:
+        if self._handle_filter_key(event):
+            return
+        super().keyPressEvent(event)
 
     def _icon(self, item: BrowserItem):
         return browser_item_icon(item, size=52)
@@ -176,3 +185,29 @@ class ContentsIconView(QListWidget):
         if timestamp <= 0:
             return ""
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+
+    def _handle_filter_key(self, event) -> bool:
+        if event.modifiers() & (
+            Qt.KeyboardModifier.ControlModifier
+            | Qt.KeyboardModifier.AltModifier
+            | Qt.KeyboardModifier.MetaModifier
+        ):
+            return False
+        if event.key() == Qt.Key.Key_Backspace:
+            self.filter_backspace_requested.emit()
+            event.accept()
+            return True
+        if event.key() == Qt.Key.Key_Delete:
+            self.filter_clear_requested.emit()
+            event.accept()
+            return True
+        if event.key() == Qt.Key.Key_Escape:
+            self.filter_clear_requested.emit()
+            event.accept()
+            return True
+        text = event.text()
+        if text and text.isprintable():
+            self.filter_text_typed.emit(text)
+            event.accept()
+            return True
+        return False
