@@ -62,3 +62,42 @@ class BrowserItem:
     @property
     def missing_count(self) -> int:
         return len(self.missing or [])
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "path": self.path,
+            "item_type": self.item_type.value,
+            "name": self.name,
+            "display_name": self.display_name,
+            "frame_range": self.frame_range,
+            "pad": self.pad,
+            "count": self.count,
+            "missing": list(self.missing) if self.missing is not None else None,
+            "size_bytes": self.size_bytes,
+            "modified_time": self.modified_time,
+            "child_paths": list(self.child_paths)
+            if self.child_paths is not None
+            else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> BrowserItem:
+        return cls(
+            path=str(data["path"]),
+            item_type=ItemType(str(data["item_type"])),
+            name=str(data["name"]),
+            display_name=str(data["display_name"]),
+            frame_range=str(data["frame_range"])
+            if data["frame_range"] is not None
+            else None,
+            pad=str(data["pad"]) if data["pad"] is not None else None,
+            count=int(data["count"]),
+            missing=[int(value) for value in data["missing"]]
+            if data["missing"] is not None
+            else None,
+            size_bytes=int(data["size_bytes"]),
+            modified_time=float(data["modified_time"]),
+            child_paths=[str(value) for value in data["child_paths"]]
+            if data["child_paths"] is not None
+            else None,
+        )

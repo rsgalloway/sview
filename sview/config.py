@@ -54,35 +54,59 @@ class HandlerConfig:
 
 
 @dataclass
+class ScanWorkerConfig:
+    nice_increment: int = 15
+    memory_limit_mb: int | None = 2048
+    timeout_seconds: int | None = 30
+
+
+@dataclass
 class AppConfig:
     file_handler: HandlerConfig
     sequence_handler: HandlerConfig
+    scan_worker: ScanWorkerConfig
 
     @classmethod
     def default(cls) -> "AppConfig":
         return cls(
             file_handler=HandlerConfig(mode="system"),
             sequence_handler=HandlerConfig(mode="expand"),
+            scan_worker=ScanWorkerConfig(),
         )
 
     @classmethod
     def load(cls) -> "AppConfig":
         if not CONFIG_PATH.exists():
             config = cls.default()
-            config.save()
+            try:
+                config.save()
+            except OSError:
+                pass
             return config
 
         try:
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             config = cls.default()
-            config.save()
+            try:
+                config.save()
+            except OSError:
+                pass
             return config
 
         handlers = data.get("handlers", {})
+        scanner = data.get("scanner", {})
+        worker = scanner.get("worker", {})
+        needs_save = (
+            "scanner" not in data
+            or "worker" not in scanner
+            or "nice_increment" not in worker
+            or "memory_limit_mb" not in worker
+            or "timeout_seconds" not in worker
+        )
         file_handler = handlers.get("file", {})
         sequence_handler = handlers.get("sequence", {})
-        return cls(
+        config = cls(
             file_handler=HandlerConfig(
                 mode=file_handler.get("mode", "system"),
                 command=file_handler.get("command", ""),
@@ -91,7 +115,28 @@ class AppConfig:
                 mode=sequence_handler.get("mode", "expand"),
                 command=sequence_handler.get("command", ""),
             ),
+            scan_worker=ScanWorkerConfig(
+                nice_increment=int(worker.get("nice_increment", 15)),
+                memory_limit_mb=(
+                    int(worker["memory_limit_mb"])
+                    if "memory_limit_mb" in worker
+                    and worker.get("memory_limit_mb") is not None
+                    else (None if "memory_limit_mb" in worker else 2048)
+                ),
+                timeout_seconds=(
+                    int(worker["timeout_seconds"])
+                    if "timeout_seconds" in worker
+                    and worker.get("timeout_seconds") is not None
+                    else (None if "timeout_seconds" in worker else 30)
+                ),
+            ),
         )
+        if needs_save:
+            try:
+                config.save()
+            except OSError:
+                pass
+        return config
 
     def save(self) -> None:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -105,7 +150,14 @@ class AppConfig:
                     "mode": self.sequence_handler.mode,
                     "command": self.sequence_handler.command,
                 },
-            }
+            },
+            "scanner": {
+                "worker": {
+                    "nice_increment": self.scan_worker.nice_increment,
+                    "memory_limit_mb": self.scan_worker.memory_limit_mb,
+                    "timeout_seconds": self.scan_worker.timeout_seconds,
+                }
+            },
         }
         CONFIG_PATH.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 

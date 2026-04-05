@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sview.controller import BrowserController
 from sview.model import ItemType
-from sview.scanner import DirectoryScanner
+from sview.scanner import DirectoryScanner, ScanResult
 
 
 def _touch(path: Path) -> None:
@@ -81,6 +81,25 @@ class DirectoryScannerTests(unittest.TestCase):
             collapsed_items = controller.collapse_sequence()
             self.assertEqual(len(collapsed_items), 1)
             self.assertIs(collapsed_items[0].item_type, ItemType.SEQUENCE)
+
+    def test_scan_result_round_trip_serialization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            _touch(root / "plate.0001.jpg")
+            _touch(root / "plate.0002.jpg")
+
+            result = DirectoryScanner().scan(root)
+            restored = ScanResult.from_dict(result.to_dict())
+
+            self.assertEqual(restored.path, result.path)
+            self.assertEqual(
+                [item.display_name for item in restored.grouped_items],
+                [item.display_name for item in result.grouped_items],
+            )
+            self.assertEqual(
+                [item.path for item in restored.raw_items],
+                [item.path for item in result.raw_items],
+            )
 
 
 if __name__ == "__main__":

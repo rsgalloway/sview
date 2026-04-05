@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 - 2026-04-05
+
+- Moved directory scanning into a subprocess worker for safer cancellation
+- Added scan worker guardrails including priority, memory, and timeout controls
+- Improved scan error reporting with dialogs and optional `--debug` terminal output
+
 ## 0.1.1 - 2026-04-05
 
 - Improved scanner responsiveness and stop/cancel behavior

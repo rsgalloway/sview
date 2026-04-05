@@ -58,6 +58,23 @@ class ScanResult:
     grouped_items: list[BrowserItem]
     raw_items: list[BrowserItem]
 
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "path": str(self.path),
+            "grouped_items": [item.to_dict() for item in self.grouped_items],
+            "raw_items": [item.to_dict() for item in self.raw_items],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> ScanResult:
+        grouped_items = [BrowserItem.from_dict(item) for item in data["grouped_items"]]
+        raw_items = [BrowserItem.from_dict(item) for item in data["raw_items"]]
+        return cls(
+            path=Path(str(data["path"])),
+            grouped_items=grouped_items,
+            raw_items=raw_items,
+        )
+
 
 def ensure_pyseq_available() -> None:
     if pyseq is None:
@@ -178,7 +195,7 @@ class DirectoryScanner:
                     frame_range=frame_range,
                     pad=pad_value,
                     count=len(sequence),
-                    missing=list(sequence.missing()),
+                    missing=self._normalize_missing(sequence.missing()),
                     size_bytes=int(sequence.size),
                     modified_time=float(sequence.mtime),
                     child_paths=child_paths,
@@ -202,3 +219,15 @@ class DirectoryScanner:
     def _raise_if_cancelled(cancel_check: Callable[[], bool] | None) -> None:
         if cancel_check is not None and cancel_check():
             raise ScanCancelled()
+
+    @staticmethod
+    def _normalize_missing(values: object) -> list[int]:
+        normalized: list[int] = []
+        if values is None:
+            return normalized
+        for value in values:
+            if isinstance(value, range):
+                normalized.extend(int(frame) for frame in value)
+            else:
+                normalized.append(int(value))
+        return normalized

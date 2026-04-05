@@ -35,14 +35,12 @@ Contains the MainWindow class which serves as the primary UI for sview.
 
 from __future__ import annotations
 
-from pathlib import Path
-from queue import Empty, Queue
 import json
+from pathlib import Path
 import subprocess
 import sys
-from threading import Event, Thread
 
-from PySide6.QtCore import QTimer, Qt, QUrl
+from PySide6.QtCore import QProcess, QTimer, Qt, QUrl
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -66,7 +64,7 @@ from sview.model import BrowserItem, ItemType
 from sview.qt.inspector import InspectorPanel
 from sview.qt.table import ContentsTable
 from sview.qt.tree import DirectoryTree
-from sview.scanner import DirectoryScanner, ScanCancelled, ScanResult
+from sview.scanner import ScanResult
 
 
 class MainWindow(QMainWindow):
@@ -74,10 +72,12 @@ class MainWindow(QMainWindow):
         self,
         controller: BrowserController | None = None,
         initial_path: str | Path | None = None,
+        debug: bool = False,
     ) -> None:
         super().__init__()
         self._controller = controller or BrowserController()
         self._config = AppConfig.load()
+        self._debug = debug
         self._initial_path = (
             self._normalize_path(initial_path)
             if initial_path is not None
@@ -88,10 +88,12 @@ class MainWindow(QMainWindow):
         self._history_index = -1
         self._pending_request: tuple[str, bool] | None = None
         self._active_request: tuple[str, bool] | None = None
-        self._load_thread: Thread | None = None
-        self._load_cancel_event: Event | None = None
-        self._load_queue: Queue[tuple[str, int, object]] = Queue()
-        self._load_token = 0
+        self._load_process: QProcess | None = None
+        self._load_stdout_buffer = bytearray()
+        self._load_stderr_buffer = ""
+        self._load_stderr_partial = ""
+        self._load_cancelled = False
+        self._load_timed_out = False
 
         self.setWindowTitle("sview")
         self.resize(1400, 800)
@@ -105,11 +107,12 @@ class MainWindow(QMainWindow):
         self._main_splitter: QSplitter | None = None
 
         self._progress_timer = QTimer(self)
-        self._progress_timer.setInterval(50)
-        self._progress_timer.timeout.connect(self._process_worker_messages)
         self._busy_timer = QTimer(self)
         self._busy_timer.setInterval(30)
         self._busy_timer.timeout.connect(self._advance_busy_indicator)
+        self._scan_timeout_timer = QTimer(self)
+        self._scan_timeout_timer.setSingleShot(True)
+        self._scan_timeout_timer.timeout.connect(self._handle_scan_timeout)
         self._busy_value = 0
         self._busy_direction = 1
 
@@ -284,10 +287,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._pending_request = None
-        if self._load_cancel_event is not None:
-            self._load_cancel_event.set()
-        if self._load_thread is not None and self._load_thread.is_alive():
-            self._load_thread.join(timeout=0.5)
+        if self._load_process is not None:
+            self._load_process.kill()
+            self._load_process.waitForFinished(500)
         event.accept()
 
     def _choose_directory(self) -> None:
@@ -357,76 +359,128 @@ class MainWindow(QMainWindow):
             self._request_directory(path, add_to_history=True)
 
     def _request_directory(self, path: str | Path, add_to_history: bool) -> None:
-        requested_path = str(Path(path).expanduser())
-        if self._load_thread is not None and self._load_thread.is_alive():
+        requested_path = str(self._normalize_path(path))
+        if self._is_loading():
             self._pending_request = (requested_path, add_to_history)
             self.statusBar().showMessage(f"Queued {requested_path}")
             return
 
         self._active_request = (requested_path, add_to_history)
         self._set_loading_state(True, requested_path)
-        self._load_token += 1
-        token = self._load_token
-        cancel_event = Event()
-        self._load_cancel_event = cancel_event
-        self._load_thread = Thread(
-            target=self._scan_directory_worker,
-            args=(requested_path, token, cancel_event),
-            daemon=True,
+        self._load_cancelled = False
+        self._load_timed_out = False
+        self._load_stdout_buffer = bytearray()
+        self._load_stderr_buffer = ""
+        self._load_stderr_partial = ""
+
+        process = QProcess(self)
+        process.setProgram(sys.executable)
+        arguments = ["-u", "-m", "sview.worker"]
+        if self._debug:
+            arguments.append("--debug")
+        arguments.append(requested_path)
+        process.setArguments(arguments)
+        process.readyReadStandardOutput.connect(
+            lambda process=process: self._read_scan_stdout(process)
         )
-        self._progress_timer.start()
-        self._load_thread.start()
+        process.readyReadStandardError.connect(
+            lambda process=process: self._read_scan_stderr(process)
+        )
+        process.errorOccurred.connect(
+            lambda error, process=process: self._handle_scan_process_error(
+                process, error
+            )
+        )
+        process.finished.connect(
+            lambda exit_code, exit_status, process=process: self._handle_scan_process_finished(
+                process, exit_code, exit_status
+            )
+        )
+        self._load_process = process
+        process.start()
+        timeout_seconds = self._config.scan_worker.timeout_seconds
+        if timeout_seconds is not None and timeout_seconds > 0:
+            self._scan_timeout_timer.start(timeout_seconds * 1000)
 
-    def _scan_directory_worker(
-        self, path: str, token: int, cancel_event: Event
+    def _read_scan_stdout(self, process: QProcess) -> None:
+        if process is not self._load_process:
+            return
+        self._load_stdout_buffer.extend(bytes(process.readAllStandardOutput()))
+
+    def _read_scan_stderr(self, process: QProcess) -> None:
+        if process is not self._load_process:
+            return
+        chunk = bytes(process.readAllStandardError()).decode("utf-8", "replace")
+        if not chunk:
+            return
+        self._load_stderr_buffer += chunk
+        self._load_stderr_partial += chunk
+        lines = self._load_stderr_partial.splitlines(keepends=True)
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            self._load_stderr_partial = lines.pop()
+        else:
+            self._load_stderr_partial = ""
+        for line in lines:
+            text = line.strip()
+            if text:
+                if self._debug:
+                    print(f"[sview scan] {text}", file=sys.stderr, flush=True)
+                self.statusBar().showMessage(text)
+
+    def _handle_scan_process_error(
+        self, process: QProcess, error: QProcess.ProcessError
     ) -> None:
-        scanner = DirectoryScanner()
+        if process is not self._load_process or self._load_cancelled:
+            return
+        if error is QProcess.ProcessError.FailedToStart:
+            message = process.errorString() or "Failed to start scan worker."
+            self._clear_scan_process()
+            self._handle_failed_scan(message)
 
-        def send_progress(message: str) -> None:
-            self._load_queue.put(("progress", token, message))
+    def _handle_scan_process_finished(
+        self, process: QProcess, exit_code: int, exit_status: QProcess.ExitStatus
+    ) -> None:
+        if process is not self._load_process:
+            return
+        self._read_scan_stdout(process)
+        self._read_scan_stderr(process)
+
+        response_text = (
+            bytes(self._load_stdout_buffer).decode("utf-8", "replace").strip()
+        )
+        error_text = f"{self._load_stderr_buffer}{self._load_stderr_partial}".strip()
+        cancelled = self._load_cancelled
+        timed_out = self._load_timed_out
+
+        self._clear_scan_process()
+
+        if timed_out:
+            self._handle_timed_out_scan(error_text)
+            return
+        if cancelled:
+            self._handle_cancelled_scan()
+            return
+        if exit_status is QProcess.ExitStatus.CrashExit:
+            self._handle_failed_scan(error_text or "Scan worker crashed.")
+            return
+        if exit_code != 0:
+            self._handle_failed_scan(
+                error_text or f"Scan worker exited with code {exit_code}."
+            )
+            return
+        if not response_text:
+            self._handle_failed_scan("Scan worker returned no data.")
+            return
 
         try:
-            result = scanner.scan(
-                path,
-                cancel_check=cancel_event.is_set,
-                progress_callback=send_progress,
-            )
-        except ScanCancelled:
-            self._load_queue.put(("cancelled", token, None))
+            result = ScanResult.from_dict(json.loads(response_text))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            self._handle_failed_scan(f"Invalid scan response: {exc}")
             return
-        except Exception as exc:  # pragma: no cover - UI failure path
-            self._load_queue.put(("failed", token, str(exc)))
-            return
-        self._load_queue.put(("finished", token, result))
-
-    def _process_worker_messages(self) -> None:
-        handled = False
-        while True:
-            try:
-                message_type, token, payload = self._load_queue.get_nowait()
-            except Empty:
-                break
-
-            handled = True
-            if token != self._load_token:
-                continue
-
-            if message_type == "progress":
-                self.statusBar().showMessage(str(payload))
-            elif message_type == "finished":
-                self._handle_finished_scan(payload)
-            elif message_type == "failed":
-                self._handle_failed_scan(str(payload))
-            elif message_type == "cancelled":
-                self._handle_cancelled_scan()
-
-        if handled and self._load_thread is None:
-            self._progress_timer.stop()
+        self._handle_finished_scan(result)
 
     def _handle_finished_scan(self, result: object) -> None:
         request = self._active_request
-        self._load_thread = None
-        self._load_cancel_event = None
         self._set_loading_state(False)
         if request is None or not isinstance(result, ScanResult):
             return
@@ -441,19 +495,53 @@ class MainWindow(QMainWindow):
         self._drain_pending_request()
 
     def _handle_failed_scan(self, error_message: str) -> None:
-        self._load_thread = None
-        self._load_cancel_event = None
         self._active_request = None
         self._set_loading_state(False)
+        if self._debug and error_message:
+            print(f"[sview error] {error_message}", file=sys.stderr, flush=True)
         self.statusBar().showMessage(f"Failed to load directory: {error_message}", 5000)
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Scan failed")
+        dialog.setText("Failed to load directory.")
+        dialog.setInformativeText(self._summarize_error_message(error_message))
+        details = error_message.strip()
+        if details and details != dialog.informativeText():
+            dialog.setDetailedText(details)
+        dialog.exec()
         self._drain_pending_request()
 
     def _handle_cancelled_scan(self) -> None:
-        self._load_thread = None
-        self._load_cancel_event = None
         self._active_request = None
         self._set_loading_state(False)
         self.statusBar().showMessage("Scan cancelled", 3000)
+        self._drain_pending_request()
+
+    def _handle_timed_out_scan(self, error_message: str) -> None:
+        self._active_request = None
+        self._set_loading_state(False)
+        timeout_seconds = self._config.scan_worker.timeout_seconds
+        summary = (
+            f"Scan exceeded {timeout_seconds} seconds and was stopped."
+            if timeout_seconds is not None
+            else "Scan timed out and was stopped."
+        )
+        if self._debug:
+            print(f"[sview error] {summary}", file=sys.stderr, flush=True)
+            if error_message:
+                print(error_message, file=sys.stderr, flush=True)
+        self.statusBar().showMessage(summary, 5000)
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Scan timed out")
+        dialog.setText(summary)
+        dialog.setInformativeText(
+            "This scan worker was terminated to protect system responsiveness."
+        )
+        details = error_message.strip()
+        if details:
+            dialog.setDetailedText(details)
+        dialog.exec()
         self._drain_pending_request()
 
     def _apply_filter(self, text: str) -> None:
@@ -688,7 +776,7 @@ class MainWindow(QMainWindow):
         self._update_navigation_buttons()
 
     def _update_navigation_buttons(self) -> None:
-        loading = self._load_thread is not None and self._load_thread.is_alive()
+        loading = self._is_loading()
         self._back_button.setEnabled(not loading and self._history_index > 0)
         self._up_button.setEnabled(
             not loading
@@ -744,11 +832,26 @@ class MainWindow(QMainWindow):
 
     def _cancel_scan(self) -> None:
         self._pending_request = None
-        if self._load_cancel_event is None:
+        if self._load_process is None:
             return
-        self._load_cancel_event.set()
+        self._load_cancelled = True
         self._stop_button.setEnabled(False)
         self.statusBar().showMessage("Cancelling scan...")
+        self._load_process.kill()
+
+    def _handle_scan_timeout(self) -> None:
+        if self._load_process is None:
+            return
+        self._load_timed_out = True
+        self._stop_button.setEnabled(False)
+        self.statusBar().showMessage("Scan timed out, stopping worker...")
+        if self._debug:
+            print(
+                "[sview scan] timeout reached, killing worker",
+                file=sys.stderr,
+                flush=True,
+            )
+        self._load_process.kill()
 
     def _update_status_bar(self) -> None:
         count = len(self._visible_items)
@@ -796,6 +899,23 @@ class MainWindow(QMainWindow):
                 f"Returned to {self._controller.current_path.name} sequence view", 3000
             )
         return True
+
+    def _is_loading(self) -> bool:
+        return (
+            self._load_process is not None
+            and self._load_process.state() != QProcess.ProcessState.NotRunning
+        )
+
+    def _clear_scan_process(self) -> None:
+        self._scan_timeout_timer.stop()
+        if self._load_process is not None:
+            self._load_process.deleteLater()
+        self._load_process = None
+        self._load_stdout_buffer = bytearray()
+        self._load_stderr_buffer = ""
+        self._load_stderr_partial = ""
+        self._load_cancelled = False
+        self._load_timed_out = False
 
     def _open_repo_page(self) -> None:
         QDesktopServices.openUrl(QUrl(get_repository_url()))
@@ -867,3 +987,11 @@ class MainWindow(QMainWindow):
                 break
             size /= 1024.0
         return f"{size:.1f} {unit}"
+
+    @staticmethod
+    def _summarize_error_message(error_message: str) -> str:
+        lines = [line.strip() for line in error_message.splitlines() if line.strip()]
+        for line in reversed(lines):
+            if line.startswith("ERROR:"):
+                return line.removeprefix("ERROR:").strip()
+        return lines[-1] if lines else "Unknown scan error."

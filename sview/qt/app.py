@@ -51,6 +51,7 @@ def main() -> int:
         print(__version__)
         return 0
 
+    debug = _wants_debug(sys.argv[1:])
     app = QApplication(sys.argv)
     try:
         ensure_pyseq_available()
@@ -63,13 +64,13 @@ def main() -> int:
     app.setStyle("Fusion")
     _apply_dark_theme(app)
     initial_path = _parse_initial_path(sys.argv[1:])
-    window = MainWindow(initial_path=initial_path)
+    window = MainWindow(initial_path=initial_path, debug=debug)
     window.show()
     return app.exec()
 
 
 def _parse_initial_path(args: list[str]) -> str | None:
-    filtered_args = [arg for arg in args if arg not in {"--version", "-V"}]
+    filtered_args = [arg for arg in args if arg not in {"--version", "-V", "--debug"}]
     if not filtered_args:
         return None
     candidate = Path(filtered_args[0]).expanduser()
@@ -78,6 +79,10 @@ def _parse_initial_path(args: list[str]) -> str | None:
 
 def _wants_version(args: list[str]) -> bool:
     return any(arg in {"--version", "-V"} for arg in args)
+
+
+def _wants_debug(args: list[str]) -> bool:
+    return "--debug" in args
 
 
 def _apply_dark_theme(app: QApplication) -> None:
