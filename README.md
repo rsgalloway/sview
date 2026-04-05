@@ -46,6 +46,12 @@ On first launch, `sview` writes a user config file to:
 ~/.config/sview/config.json
 ```
 
+It also stores lightweight UI state in:
+
+```bash
+~/.config/sview/ui_state.json
+```
+
 This file controls default file and sequence handlers, including custom
 commands for double-click actions.
 

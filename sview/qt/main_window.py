@@ -47,6 +47,7 @@ from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QGuiApplicatio
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMainWindow,
     QMenu,
@@ -54,15 +55,24 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
+    QStackedWidget,
     QStyle,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from sview import __version__
-from sview.config import AppConfig, build_command, get_repository_url
+from sview.config import (
+    AppConfig,
+    build_command,
+    get_repository_url,
+    load_ui_state,
+    save_ui_state,
+)
 from sview.controller import BrowserController
 from sview.model import BrowserItem, ItemType
+from sview.qt.icon_view import ContentsIconView
 from sview.qt.inspector import InspectorPanel
 from sview.qt.table import ContentsTable
 from sview.qt.tree import DirectoryTree
@@ -71,6 +81,7 @@ from sview.scanner import ScanResult
 
 class MainWindow(QMainWindow):
     SEQUENCE_METADATA_WORKERS = 4
+    SIDEBAR_WIDTH = 280
 
     def __init__(
         self,
@@ -81,6 +92,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._controller = controller or BrowserController()
         self._config = AppConfig.load()
+        self._ui_state = load_ui_state()
         self._debug = debug
         self._initial_path = (
             self._normalize_path(initial_path)
@@ -113,9 +125,17 @@ class MainWindow(QMainWindow):
         self._filter_input.setPlaceholderText("Search")
 
         self._table = ContentsTable()
+        self._icon_view = ContentsIconView()
+        self._center_stack = QStackedWidget()
         self._inspector = InspectorPanel()
+        self._tree_title = QLabel("Folders")
+        self._tree_toggle = QToolButton()
         self._tree = DirectoryTree(self._initial_path)
         self._main_splitter: QSplitter | None = None
+        self._sidebar_expanded = bool(self._ui_state.get("sidebar_expanded", True))
+        self._sidebar_restore_width = (
+            self._coerce_int(self._ui_state.get("sidebar_width")) or self.SIDEBAR_WIDTH
+        )
 
         self._progress_timer = QTimer(self)
         self._busy_timer = QTimer(self)
@@ -181,21 +201,24 @@ class MainWindow(QMainWindow):
         )
         self._refresh_button.setToolTip("Refresh")
         self._refresh_button.setFixedWidth(32)
-        self._group_toggle = QPushButton()
-        self._group_toggle.setIcon(
+        self._content_mode_toggle = QPushButton()
+        self._content_mode_toggle.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
         )
-        self._group_toggle.setToolTip("Sequence View")
-        self._group_toggle.setCheckable(True)
-        self._group_toggle.setChecked(True)
-        self._group_toggle.setFixedWidth(32)
-        self._raw_toggle = QPushButton()
-        self._raw_toggle.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+        self._content_mode_toggle.setToolTip("Sequence View")
+        self._content_mode_toggle.setCheckable(True)
+        self._content_mode_toggle.setChecked(True)
+        self._content_mode_toggle.setFixedWidth(32)
+        self._layout_mode_toggle = QPushButton()
+        self._layout_mode_toggle.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
         )
-        self._raw_toggle.setToolTip("File View")
-        self._raw_toggle.setCheckable(True)
-        self._raw_toggle.setFixedWidth(32)
+        self._layout_mode_toggle.setToolTip("Detail View")
+        self._layout_mode_toggle.setCheckable(True)
+        self._layout_mode_toggle.setChecked(
+            self._ui_state.get("center_view", "details") != "icons"
+        )
+        self._layout_mode_toggle.setFixedWidth(32)
         self._stop_button = QPushButton()
         self._stop_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserStop)
@@ -243,8 +266,9 @@ class MainWindow(QMainWindow):
         toolbar_row.addWidget(self._open_button)
         toolbar_row.addWidget(self._refresh_button)
         toolbar_row.addSpacing(6)
-        toolbar_row.addWidget(self._group_toggle)
-        toolbar_row.addWidget(self._raw_toggle)
+        toolbar_row.addWidget(self._content_mode_toggle)
+        toolbar_row.addSpacing(6)
+        toolbar_row.addWidget(self._layout_mode_toggle)
         toolbar_row.addWidget(self._stop_button)
         toolbar_row.addWidget(self._progress_bar)
         toolbar_row.addStretch(1)
@@ -253,18 +277,62 @@ class MainWindow(QMainWindow):
         root_layout.addLayout(toolbar_row)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self._tree)
-        splitter.addWidget(self._table)
+        sidebar = QWidget()
+        sidebar.setMinimumWidth(0)
+        sidebar.setMaximumWidth(self.SIDEBAR_WIDTH)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(6)
+        sidebar_header = QHBoxLayout()
+        sidebar_header.setContentsMargins(2, 0, 2, 0)
+        sidebar_header.addWidget(self._tree_title)
+        sidebar_header.addStretch(1)
+        self._tree_toggle.setCheckable(True)
+        self._tree_toggle.setChecked(self._sidebar_expanded)
+        self._tree_toggle.setAutoRaise(True)
+        self._tree_toggle.setFixedSize(18, 18)
+        self._tree_toggle.setArrowType(
+            Qt.ArrowType.LeftArrow
+            if self._sidebar_expanded
+            else Qt.ArrowType.RightArrow
+        )
+        self._tree_toggle.setToolTip(
+            "Collapse folders" if self._sidebar_expanded else "Expand folders"
+        )
+        sidebar_header.addWidget(self._tree_toggle)
+        sidebar_layout.addLayout(sidebar_header)
+        sidebar_layout.addWidget(self._tree, 1)
+        self._center_stack.addWidget(self._table)
+        self._center_stack.addWidget(self._icon_view)
+        self._center_stack.setCurrentWidget(
+            self._icon_view if not self._layout_mode_toggle.isChecked() else self._table
+        )
+
+        splitter.addWidget(sidebar)
+        splitter.addWidget(self._center_stack)
         splitter.addWidget(self._inspector)
-        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 5)
         splitter.setStretchFactor(2, 3)
         self._main_splitter = splitter
-        splitter.setSizes([260, 900, 0])
+        splitter.setCollapsible(0, True)
+        splitter.setSizes(
+            self._coerce_splitter_sizes(
+                self._ui_state.get("main_splitter_sizes"),
+                [self._sidebar_restore_width, 900, 0],
+            )
+        )
+        if not self._sidebar_expanded:
+            self._apply_sidebar_state(False)
         root_layout.addWidget(splitter, 1)
 
         self.setCentralWidget(center)
+        center.setObjectName("mainContent")
         self.statusBar().showMessage("Ready")
+        width = self._coerce_int(self._ui_state.get("window_width"))
+        height = self._coerce_int(self._ui_state.get("window_height"))
+        if width and height:
+            self.resize(width, height)
 
     def _connect_signals(self) -> None:
         self._open_action.triggered.connect(self._choose_directory)
@@ -283,17 +351,27 @@ class MainWindow(QMainWindow):
         self._home_button.clicked.connect(self._go_home)
         self._up_button.clicked.connect(self._go_up)
         self._stop_button.clicked.connect(self._cancel_scan)
-        self._group_toggle.toggled.connect(self._toggle_grouped_view)
-        self._raw_toggle.toggled.connect(self._toggle_raw_view)
+        self._content_mode_toggle.toggled.connect(self._toggle_content_mode)
         self._filter_input.textChanged.connect(self._apply_filter)
         self._table.itemSelectionChanged.connect(self._sync_inspector)
         self._table.itemDoubleClicked.connect(self._activate_selected_item)
         self._table.context_requested.connect(self._show_item_context_menu)
+        self._icon_view.itemSelectionChanged.connect(self._sync_inspector)
+        self._icon_view.itemActivated.connect(self._activate_selected_item)
+        self._icon_view.context_requested.connect(self._show_item_context_menu)
         self._tree.selectionModel().selectionChanged.connect(
             self._handle_tree_selection
         )
+        self._layout_mode_toggle.toggled.connect(self._toggle_layout_mode)
+        self._tree_toggle.toggled.connect(self._toggle_sidebar)
         self._inspector.copy_path_button.clicked.connect(self._copy_selected_path)
         self._inspector.copy_pattern_button.clicked.connect(self._copy_selected_pattern)
+        self._inspector.find_missing_button.clicked.connect(
+            self._find_missing_for_selected_sequence
+        )
+        self._inspector.get_size_button.clicked.connect(
+            self._get_size_for_selected_sequence
+        )
         self._inspector.expand_button.clicked.connect(
             self._expand_or_collapse_selected_sequence
         )
@@ -305,6 +383,7 @@ class MainWindow(QMainWindow):
             self._load_process.kill()
             self._load_process.waitForFinished(500)
         self._metadata_executor.shutdown(wait=False)
+        self._save_ui_state()
         event.accept()
 
     def _choose_directory(self) -> None:
@@ -345,27 +424,35 @@ class MainWindow(QMainWindow):
         self._sync_tree_to_path(str(home))
         self._request_directory(home, add_to_history=True)
 
-    def _toggle_grouped_view(self, enabled: bool) -> None:
-        if not enabled and not self._raw_toggle.isChecked():
-            self._group_toggle.setChecked(True)
-            return
-        self._controller.set_grouped_view(enabled)
-        self._raw_toggle.blockSignals(True)
-        self._raw_toggle.setChecked(not enabled)
-        self._raw_toggle.blockSignals(False)
+    def _toggle_content_mode(self, sequence_view: bool) -> None:
+        self._controller.set_grouped_view(sequence_view)
+        self._content_mode_toggle.setIcon(
+            self.style().standardIcon(
+                QStyle.StandardPixmap.SP_FileDialogDetailedView
+                if sequence_view
+                else QStyle.StandardPixmap.SP_FileIcon
+            )
+        )
+        self._content_mode_toggle.setToolTip(
+            "Sequence View" if sequence_view else "File View"
+        )
         self._apply_filter(self._filter_input.text())
 
-    def _toggle_raw_view(self, enabled: bool) -> None:
-        if not enabled and not self._group_toggle.isChecked():
-            self._raw_toggle.setChecked(True)
-            return
-        if enabled == (not self._controller.grouped_view):
-            return
-        self._group_toggle.blockSignals(True)
-        self._group_toggle.setChecked(not enabled)
-        self._group_toggle.blockSignals(False)
-        self._controller.set_grouped_view(not enabled)
-        self._apply_filter(self._filter_input.text())
+    def _toggle_layout_mode(self, detail_view: bool) -> None:
+        self._layout_mode_toggle.setIcon(
+            self.style().standardIcon(
+                QStyle.StandardPixmap.SP_FileDialogDetailedView
+                if detail_view
+                else QStyle.StandardPixmap.SP_FileDialogListView
+            )
+        )
+        self._layout_mode_toggle.setToolTip(
+            "Detail View" if detail_view else "Icon View"
+        )
+        self._center_stack.setCurrentWidget(
+            self._table if detail_view else self._icon_view
+        )
+        self._save_ui_state()
 
     def _handle_tree_selection(self) -> None:
         index = self._tree.currentIndex()
@@ -575,11 +662,12 @@ class MainWindow(QMainWindow):
 
         self._visible_items = filtered
         self._table.set_items(filtered)
+        self._icon_view.set_items(filtered)
         self._inspector.clear_details()
         self._update_status_bar()
 
     def _sync_inspector(self) -> None:
-        item = self._table.current_browser_item()
+        item = self._current_browser_item()
         if item is None:
             self._inspector.clear_details()
             return
@@ -588,13 +676,13 @@ class MainWindow(QMainWindow):
             self._inspector.expand_button.setText("Collapse Sequence")
 
     def _activate_selected_item(self, *_args) -> None:
-        item = self._table.current_browser_item()
+        item = self._current_browser_item()
         if item is None:
             return
         self._activate_item(item)
 
     def _expand_or_collapse_selected_sequence(self) -> None:
-        item = self._inspector.current_item or self._table.current_browser_item()
+        item = self._inspector.current_item or self._current_browser_item()
         if item is None or item.item_type is not ItemType.SEQUENCE:
             return
         if (
@@ -612,21 +700,53 @@ class MainWindow(QMainWindow):
         )
 
     def _copy_selected_path(self) -> None:
-        item = self._inspector.current_item or self._table.current_browser_item()
+        item = self._inspector.current_item or self._current_browser_item()
         if item is None:
             return
         QGuiApplication.clipboard().setText(item.path)
         self.statusBar().showMessage(f"Copied path for {item.display_name}", 3000)
 
     def _copy_selected_pattern(self) -> None:
-        item = self._inspector.current_item or self._table.current_browser_item()
+        item = self._inspector.current_item or self._current_browser_item()
         if item is None or item.item_type is not ItemType.SEQUENCE:
             return
         QGuiApplication.clipboard().setText(item.display_name)
         self.statusBar().showMessage(f"Copied pattern {item.display_name}", 3000)
 
+    def _find_missing_for_selected_sequence(self) -> None:
+        item = self._inspector.current_item or self._current_browser_item()
+        if item is None or item.item_type is not ItemType.SEQUENCE:
+            return
+        data = self._run_sstat_json(item)
+        if data is None:
+            return
+        missing = self._coerce_missing_list(data.get("missing"))
+        item.missing = missing or None
+        self._table.update_item(item)
+        self._inspector.set_item(item)
+        self.statusBar().showMessage(
+            f"Loaded missing-frame data for {item.display_name}", 3000
+        )
+
+    def _get_size_for_selected_sequence(self) -> None:
+        item = self._inspector.current_item or self._current_browser_item()
+        if item is None or item.item_type is not ItemType.SEQUENCE:
+            return
+        data = self._run_sstat_json(item)
+        if data is None:
+            return
+        size_bytes = self._coerce_int(data.get("size_bytes")) or self._coerce_int(
+            data.get("size")
+        )
+        if size_bytes is not None:
+            item.size_bytes = size_bytes
+        self._table.update_item(item)
+        self._inspector.set_item(item)
+        self._update_status_bar()
+        self.statusBar().showMessage(f"Loaded size for {item.display_name}", 3000)
+
     def _open_selected_properties(self) -> None:
-        item = self._inspector.current_item or self._table.current_browser_item()
+        item = self._inspector.current_item or self._current_browser_item()
         if item is None:
             return
         self._open_properties(item)
@@ -718,21 +838,10 @@ class MainWindow(QMainWindow):
         self._expand_or_collapse_selected_sequence()
 
     def _run_sequence_sstat(self, item: BrowserItem) -> None:
-        executable = self._tool_path("sstat")
-        if executable is None:
+        data = self._run_sstat_json(item)
+        if data is None:
             return
-        completed = subprocess.run(
-            [executable, item.path, "--json"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if completed.returncode != 0:
-            QMessageBox.warning(
-                self, "sstat failed", completed.stderr.strip() or "sstat failed."
-            )
-            return
-        text = self._format_sstat_output(completed.stdout.strip())
+        text = self._format_sstat_output(json.dumps(data))
         QMessageBox.information(self, "Properties", text or "No output.")
 
     def _run_sequence_transfer(self, item: BrowserItem, tool_name: str) -> None:
@@ -821,8 +930,8 @@ class MainWindow(QMainWindow):
             not loading
             and self._controller.current_path.parent != self._controller.current_path
         )
-        self._group_toggle.setEnabled(not loading)
-        self._raw_toggle.setEnabled(not loading)
+        self._content_mode_toggle.setEnabled(not loading)
+        self._layout_mode_toggle.setEnabled(not loading)
         self._open_button.setEnabled(not loading)
         self._refresh_button.setEnabled(not loading)
         self._filter_input.setEnabled(not loading)
@@ -929,6 +1038,7 @@ class MainWindow(QMainWindow):
             if item is None:
                 continue
             self._table.update_item(item)
+            self._icon_view.update_item(item)
             if (
                 self._inspector.current_item is not None
                 and self._inspector.current_item.path == item.path
@@ -939,6 +1049,56 @@ class MainWindow(QMainWindow):
             self._update_status_bar()
         if self._metadata_pending_count == 0:
             self._metadata_timer.stop()
+
+    def _run_sstat_json(self, item: BrowserItem) -> dict[str, object] | None:
+        executable = self._tool_path("sstat")
+        if executable is None:
+            return None
+        completed = subprocess.run(
+            [executable, item.path, "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            QMessageBox.warning(
+                self, "sstat failed", completed.stderr.strip() or "sstat failed."
+            )
+            return None
+        try:
+            return json.loads(completed.stdout.strip())
+        except json.JSONDecodeError:
+            QMessageBox.warning(
+                self, "sstat failed", "Received invalid JSON from sstat."
+            )
+            return None
+
+    @staticmethod
+    def _coerce_int(value: object) -> int | None:
+        try:
+            if value is None:
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _coerce_missing_list(cls, value: object) -> list[int]:
+        if not isinstance(value, list):
+            return []
+        frames: list[int] = []
+        for item in value:
+            if isinstance(item, list) and len(item) == 2:
+                start = cls._coerce_int(item[0])
+                end = cls._coerce_int(item[1])
+                if start is None or end is None:
+                    continue
+                frames.extend(range(start, end + 1))
+                continue
+            coerced = cls._coerce_int(item)
+            if coerced is not None:
+                frames.append(coerced)
+        return frames
 
     def _advance_busy_indicator(self) -> None:
         self._busy_value += self._busy_direction * 4
@@ -960,6 +1120,7 @@ class MainWindow(QMainWindow):
         sizes[1] += reclaimed
         sizes[2] = 0
         self._main_splitter.setSizes(sizes)
+        self._save_ui_state()
 
     def _collapse_tree(self) -> None:
         self._tree.collapseAll()
@@ -992,6 +1153,78 @@ class MainWindow(QMainWindow):
         self._load_stderr_partial = ""
         self._load_cancelled = False
         self._load_timed_out = False
+
+    def _save_ui_state(self) -> None:
+        sidebar_width = self._sidebar_restore_width
+        if self._main_splitter is not None:
+            sizes = self._main_splitter.sizes()
+            if sizes and sizes[0] > 0:
+                sidebar_width = sizes[0]
+        state = {
+            "window_width": self.width(),
+            "window_height": self.height(),
+            "main_splitter_sizes": self._main_splitter.sizes()
+            if self._main_splitter is not None
+            else [self.SIDEBAR_WIDTH, 900, 0],
+            "center_view": "icons"
+            if not self._layout_mode_toggle.isChecked()
+            else "details",
+            "sidebar_expanded": self._sidebar_expanded,
+            "sidebar_width": sidebar_width,
+        }
+        try:
+            save_ui_state(state)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _coerce_splitter_sizes(value: object, default: list[int]) -> list[int]:
+        if not isinstance(value, list) or len(value) != len(default):
+            return list(default)
+        sizes: list[int] = []
+        for item in value:
+            try:
+                sizes.append(max(0, int(item)))
+            except (TypeError, ValueError):
+                return list(default)
+        return sizes
+
+    def _current_browser_item(self) -> BrowserItem | None:
+        if self._center_stack.currentWidget() is self._icon_view:
+            return self._icon_view.current_browser_item()
+        return self._table.current_browser_item()
+
+    def _toggle_sidebar(self, expanded: bool) -> None:
+        self._apply_sidebar_state(expanded)
+        self._save_ui_state()
+
+    def _apply_sidebar_state(self, expanded: bool) -> None:
+        if self._main_splitter is None:
+            self._sidebar_expanded = expanded
+            return
+        self._sidebar_expanded = expanded
+        self._tree_toggle.blockSignals(True)
+        self._tree_toggle.setChecked(expanded)
+        self._tree_toggle.blockSignals(False)
+        self._tree_toggle.setArrowType(
+            Qt.ArrowType.LeftArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        self._tree_toggle.setToolTip(
+            "Collapse folders" if expanded else "Expand folders"
+        )
+        sizes = self._main_splitter.sizes()
+        if len(sizes) < 3:
+            return
+        if expanded:
+            target = min(self.SIDEBAR_WIDTH, max(220, self._sidebar_restore_width))
+            sizes[1] = max(0, sizes[1] - target)
+            sizes[0] = target
+        else:
+            if sizes[0] > 0:
+                self._sidebar_restore_width = sizes[0]
+            sizes[1] += sizes[0]
+            sizes[0] = 0
+        self._main_splitter.setSizes(sizes)
 
     def _open_repo_page(self) -> None:
         QDesktopServices.openUrl(QUrl(get_repository_url()))

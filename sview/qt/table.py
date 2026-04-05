@@ -67,22 +67,16 @@ class ContentsTable(QTableWidget):
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.verticalHeader().setVisible(False)
         self.horizontalHeader().setStretchLastSection(True)
-        self.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.horizontalHeader().setSectionResizeMode(
-            4, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.horizontalHeader().setSectionResizeMode(
-            5, QHeaderView.ResizeMode.ResizeToContents
-        )
+        header = self.horizontalHeader()
+        for column in range(len(self.HEADERS)):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+        self.setColumnWidth(0, 320)
+        self.setColumnWidth(1, 90)
+        self.setColumnWidth(2, 110)
+        self.setColumnWidth(3, 70)
+        self.setColumnWidth(4, 110)
+        self.setColumnWidth(5, 90)
+        self.setColumnWidth(6, 140)
         self.setShowGrid(False)
         self.setAlternatingRowColors(False)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -147,7 +141,6 @@ class ContentsTable(QTableWidget):
             self.setSortingEnabled(True)
             self.sortItems(0, Qt.SortOrder.AscendingOrder)
             self.horizontalHeader().setSortIndicator(0, Qt.SortOrder.AscendingOrder)
-            self.resizeColumnsToContents()
 
     def current_browser_item(self) -> BrowserItem | None:
         selected = self.selectedItems()

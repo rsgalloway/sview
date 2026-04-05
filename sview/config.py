@@ -44,6 +44,7 @@ from pathlib import Path
 
 CONFIG_DIR = Path.home() / ".config" / "sview"
 CONFIG_PATH = CONFIG_DIR / "config.json"
+UI_STATE_PATH = CONFIG_DIR / "ui_state.json"
 DEFAULT_REPOSITORY_URL = "https://github.com/rsgalloway/sview"
 
 
@@ -191,3 +192,18 @@ def get_repository_url() -> str:
             return url.strip()
 
     return DEFAULT_REPOSITORY_URL
+
+
+def load_ui_state() -> dict[str, object]:
+    if not UI_STATE_PATH.exists():
+        return {}
+    try:
+        data = json.loads(UI_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_ui_state(state: dict[str, object]) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    UI_STATE_PATH.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
