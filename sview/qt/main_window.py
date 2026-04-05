@@ -35,18 +35,17 @@ Contains the MainWindow class which serves as the primary UI for sview.
 
 from __future__ import annotations
 
-from pathlib import Path
-from queue import Empty, Queue
 import json
+from pathlib import Path
 import subprocess
 import sys
-from threading import Event, Thread
 
-from PySide6.QtCore import QTimer, Qt, QUrl
+from PySide6.QtCore import QProcess, QTimer, Qt, QUrl
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMainWindow,
     QMenu,
@@ -54,30 +53,44 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
+    QStackedWidget,
     QStyle,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from sview import __version__
-from sview.config import AppConfig, build_command, get_repository_url
+from sview.config import (
+    AppConfig,
+    build_command,
+    get_repository_url,
+    load_ui_state,
+    save_ui_state,
+)
 from sview.controller import BrowserController
 from sview.model import BrowserItem, ItemType
+from sview.qt.icon_view import ContentsIconView
 from sview.qt.inspector import InspectorPanel
 from sview.qt.table import ContentsTable
 from sview.qt.tree import DirectoryTree
-from sview.scanner import DirectoryScanner, ScanCancelled, ScanResult
+from sview.scanner import ScanResult
 
 
 class MainWindow(QMainWindow):
+    SIDEBAR_WIDTH = 280
+
     def __init__(
         self,
         controller: BrowserController | None = None,
         initial_path: str | Path | None = None,
+        debug: bool = False,
     ) -> None:
         super().__init__()
         self._controller = controller or BrowserController()
         self._config = AppConfig.load()
+        self._ui_state = load_ui_state()
+        self._debug = debug
         self._initial_path = (
             self._normalize_path(initial_path)
             if initial_path is not None
@@ -88,10 +101,12 @@ class MainWindow(QMainWindow):
         self._history_index = -1
         self._pending_request: tuple[str, bool] | None = None
         self._active_request: tuple[str, bool] | None = None
-        self._load_thread: Thread | None = None
-        self._load_cancel_event: Event | None = None
-        self._load_queue: Queue[tuple[str, int, object]] = Queue()
-        self._load_token = 0
+        self._load_process: QProcess | None = None
+        self._load_stdout_buffer = bytearray()
+        self._load_stderr_buffer = ""
+        self._load_stderr_partial = ""
+        self._load_cancelled = False
+        self._load_timed_out = False
 
         self.setWindowTitle("sview")
         self.resize(1400, 800)
@@ -100,16 +115,25 @@ class MainWindow(QMainWindow):
         self._filter_input.setPlaceholderText("Search")
 
         self._table = ContentsTable()
+        self._icon_view = ContentsIconView()
+        self._center_stack = QStackedWidget()
         self._inspector = InspectorPanel()
+        self._tree_title = QLabel("Folders")
+        self._tree_toggle = QToolButton()
         self._tree = DirectoryTree(self._initial_path)
         self._main_splitter: QSplitter | None = None
+        self._sidebar_expanded = bool(self._ui_state.get("sidebar_expanded", True))
+        self._sidebar_restore_width = (
+            self._coerce_int(self._ui_state.get("sidebar_width")) or self.SIDEBAR_WIDTH
+        )
 
         self._progress_timer = QTimer(self)
-        self._progress_timer.setInterval(50)
-        self._progress_timer.timeout.connect(self._process_worker_messages)
         self._busy_timer = QTimer(self)
         self._busy_timer.setInterval(30)
         self._busy_timer.timeout.connect(self._advance_busy_indicator)
+        self._scan_timeout_timer = QTimer(self)
+        self._scan_timeout_timer.setSingleShot(True)
+        self._scan_timeout_timer.timeout.connect(self._handle_scan_timeout)
         self._busy_value = 0
         self._busy_direction = 1
 
@@ -164,21 +188,24 @@ class MainWindow(QMainWindow):
         )
         self._refresh_button.setToolTip("Refresh")
         self._refresh_button.setFixedWidth(32)
-        self._group_toggle = QPushButton()
-        self._group_toggle.setIcon(
+        self._content_mode_toggle = QPushButton()
+        self._content_mode_toggle.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
         )
-        self._group_toggle.setToolTip("Sequence View")
-        self._group_toggle.setCheckable(True)
-        self._group_toggle.setChecked(True)
-        self._group_toggle.setFixedWidth(32)
-        self._raw_toggle = QPushButton()
-        self._raw_toggle.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+        self._content_mode_toggle.setToolTip("Sequence View")
+        self._content_mode_toggle.setCheckable(True)
+        self._content_mode_toggle.setChecked(True)
+        self._content_mode_toggle.setFixedWidth(32)
+        self._layout_mode_toggle = QPushButton()
+        self._layout_mode_toggle.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
         )
-        self._raw_toggle.setToolTip("File View")
-        self._raw_toggle.setCheckable(True)
-        self._raw_toggle.setFixedWidth(32)
+        self._layout_mode_toggle.setToolTip("Detail View")
+        self._layout_mode_toggle.setCheckable(True)
+        self._layout_mode_toggle.setChecked(
+            self._ui_state.get("center_view", "details") != "icons"
+        )
+        self._layout_mode_toggle.setFixedWidth(32)
         self._stop_button = QPushButton()
         self._stop_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserStop)
@@ -226,8 +253,9 @@ class MainWindow(QMainWindow):
         toolbar_row.addWidget(self._open_button)
         toolbar_row.addWidget(self._refresh_button)
         toolbar_row.addSpacing(6)
-        toolbar_row.addWidget(self._group_toggle)
-        toolbar_row.addWidget(self._raw_toggle)
+        toolbar_row.addWidget(self._content_mode_toggle)
+        toolbar_row.addSpacing(6)
+        toolbar_row.addWidget(self._layout_mode_toggle)
         toolbar_row.addWidget(self._stop_button)
         toolbar_row.addWidget(self._progress_bar)
         toolbar_row.addStretch(1)
@@ -236,18 +264,62 @@ class MainWindow(QMainWindow):
         root_layout.addLayout(toolbar_row)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self._tree)
-        splitter.addWidget(self._table)
+        sidebar = QWidget()
+        sidebar.setMinimumWidth(0)
+        sidebar.setMaximumWidth(self.SIDEBAR_WIDTH)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(6)
+        sidebar_header = QHBoxLayout()
+        sidebar_header.setContentsMargins(2, 0, 2, 0)
+        sidebar_header.addWidget(self._tree_title)
+        sidebar_header.addStretch(1)
+        self._tree_toggle.setCheckable(True)
+        self._tree_toggle.setChecked(self._sidebar_expanded)
+        self._tree_toggle.setAutoRaise(True)
+        self._tree_toggle.setFixedSize(18, 18)
+        self._tree_toggle.setArrowType(
+            Qt.ArrowType.LeftArrow
+            if self._sidebar_expanded
+            else Qt.ArrowType.RightArrow
+        )
+        self._tree_toggle.setToolTip(
+            "Collapse folders" if self._sidebar_expanded else "Expand folders"
+        )
+        sidebar_header.addWidget(self._tree_toggle)
+        sidebar_layout.addLayout(sidebar_header)
+        sidebar_layout.addWidget(self._tree, 1)
+        self._center_stack.addWidget(self._table)
+        self._center_stack.addWidget(self._icon_view)
+        self._center_stack.setCurrentWidget(
+            self._icon_view if not self._layout_mode_toggle.isChecked() else self._table
+        )
+
+        splitter.addWidget(sidebar)
+        splitter.addWidget(self._center_stack)
         splitter.addWidget(self._inspector)
-        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 5)
         splitter.setStretchFactor(2, 3)
         self._main_splitter = splitter
-        splitter.setSizes([260, 900, 0])
+        splitter.setCollapsible(0, True)
+        splitter.setSizes(
+            self._coerce_splitter_sizes(
+                self._ui_state.get("main_splitter_sizes"),
+                [self._sidebar_restore_width, 900, 0],
+            )
+        )
+        if not self._sidebar_expanded:
+            self._apply_sidebar_state(False)
         root_layout.addWidget(splitter, 1)
 
         self.setCentralWidget(center)
+        center.setObjectName("mainContent")
         self.statusBar().showMessage("Ready")
+        width = self._coerce_int(self._ui_state.get("window_width"))
+        height = self._coerce_int(self._ui_state.get("window_height"))
+        if width and height:
+            self.resize(width, height)
 
     def _connect_signals(self) -> None:
         self._open_action.triggered.connect(self._choose_directory)
@@ -266,17 +338,27 @@ class MainWindow(QMainWindow):
         self._home_button.clicked.connect(self._go_home)
         self._up_button.clicked.connect(self._go_up)
         self._stop_button.clicked.connect(self._cancel_scan)
-        self._group_toggle.toggled.connect(self._toggle_grouped_view)
-        self._raw_toggle.toggled.connect(self._toggle_raw_view)
+        self._content_mode_toggle.toggled.connect(self._toggle_content_mode)
         self._filter_input.textChanged.connect(self._apply_filter)
         self._table.itemSelectionChanged.connect(self._sync_inspector)
         self._table.itemDoubleClicked.connect(self._activate_selected_item)
         self._table.context_requested.connect(self._show_item_context_menu)
+        self._icon_view.itemSelectionChanged.connect(self._sync_inspector)
+        self._icon_view.itemActivated.connect(self._activate_selected_item)
+        self._icon_view.context_requested.connect(self._show_item_context_menu)
         self._tree.selectionModel().selectionChanged.connect(
             self._handle_tree_selection
         )
+        self._layout_mode_toggle.toggled.connect(self._toggle_layout_mode)
+        self._tree_toggle.toggled.connect(self._toggle_sidebar)
         self._inspector.copy_path_button.clicked.connect(self._copy_selected_path)
         self._inspector.copy_pattern_button.clicked.connect(self._copy_selected_pattern)
+        self._inspector.find_missing_button.clicked.connect(
+            self._find_missing_for_selected_sequence
+        )
+        self._inspector.get_size_button.clicked.connect(
+            self._get_size_for_selected_sequence
+        )
         self._inspector.expand_button.clicked.connect(
             self._expand_or_collapse_selected_sequence
         )
@@ -284,10 +366,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._pending_request = None
-        if self._load_cancel_event is not None:
-            self._load_cancel_event.set()
-        if self._load_thread is not None and self._load_thread.is_alive():
-            self._load_thread.join(timeout=0.5)
+        if self._load_process is not None:
+            self._load_process.kill()
+            self._load_process.waitForFinished(500)
+        self._save_ui_state()
         event.accept()
 
     def _choose_directory(self) -> None:
@@ -328,27 +410,35 @@ class MainWindow(QMainWindow):
         self._sync_tree_to_path(str(home))
         self._request_directory(home, add_to_history=True)
 
-    def _toggle_grouped_view(self, enabled: bool) -> None:
-        if not enabled and not self._raw_toggle.isChecked():
-            self._group_toggle.setChecked(True)
-            return
-        self._controller.set_grouped_view(enabled)
-        self._raw_toggle.blockSignals(True)
-        self._raw_toggle.setChecked(not enabled)
-        self._raw_toggle.blockSignals(False)
+    def _toggle_content_mode(self, sequence_view: bool) -> None:
+        self._controller.set_grouped_view(sequence_view)
+        self._content_mode_toggle.setIcon(
+            self.style().standardIcon(
+                QStyle.StandardPixmap.SP_FileDialogDetailedView
+                if sequence_view
+                else QStyle.StandardPixmap.SP_FileIcon
+            )
+        )
+        self._content_mode_toggle.setToolTip(
+            "Sequence View" if sequence_view else "File View"
+        )
         self._apply_filter(self._filter_input.text())
 
-    def _toggle_raw_view(self, enabled: bool) -> None:
-        if not enabled and not self._group_toggle.isChecked():
-            self._raw_toggle.setChecked(True)
-            return
-        if enabled == (not self._controller.grouped_view):
-            return
-        self._group_toggle.blockSignals(True)
-        self._group_toggle.setChecked(not enabled)
-        self._group_toggle.blockSignals(False)
-        self._controller.set_grouped_view(not enabled)
-        self._apply_filter(self._filter_input.text())
+    def _toggle_layout_mode(self, detail_view: bool) -> None:
+        self._layout_mode_toggle.setIcon(
+            self.style().standardIcon(
+                QStyle.StandardPixmap.SP_FileDialogDetailedView
+                if detail_view
+                else QStyle.StandardPixmap.SP_FileDialogListView
+            )
+        )
+        self._layout_mode_toggle.setToolTip(
+            "Detail View" if detail_view else "Icon View"
+        )
+        self._center_stack.setCurrentWidget(
+            self._table if detail_view else self._icon_view
+        )
+        self._save_ui_state()
 
     def _handle_tree_selection(self) -> None:
         index = self._tree.currentIndex()
@@ -357,76 +447,134 @@ class MainWindow(QMainWindow):
             self._request_directory(path, add_to_history=True)
 
     def _request_directory(self, path: str | Path, add_to_history: bool) -> None:
-        requested_path = str(Path(path).expanduser())
-        if self._load_thread is not None and self._load_thread.is_alive():
+        requested_path = str(self._normalize_path(path))
+        if self._is_loading():
             self._pending_request = (requested_path, add_to_history)
             self.statusBar().showMessage(f"Queued {requested_path}")
             return
 
         self._active_request = (requested_path, add_to_history)
         self._set_loading_state(True, requested_path)
-        self._load_token += 1
-        token = self._load_token
-        cancel_event = Event()
-        self._load_cancel_event = cancel_event
-        self._load_thread = Thread(
-            target=self._scan_directory_worker,
-            args=(requested_path, token, cancel_event),
-            daemon=True,
+        self._load_cancelled = False
+        self._load_timed_out = False
+        self._load_stdout_buffer = bytearray()
+        self._load_stderr_buffer = ""
+        self._load_stderr_partial = ""
+
+        process = QProcess(self)
+        process.setProgram(sys.executable)
+        arguments = ["-u", "-m", "sview.worker"]
+        if self._debug:
+            arguments.append("--debug")
+        arguments.append(requested_path)
+        process.setArguments(arguments)
+        process.readyReadStandardOutput.connect(
+            lambda process=process: self._read_scan_stdout(process)
         )
-        self._progress_timer.start()
-        self._load_thread.start()
+        process.readyReadStandardError.connect(
+            lambda process=process: self._read_scan_stderr(process)
+        )
+        process.errorOccurred.connect(
+            lambda error, process=process: self._handle_scan_process_error(
+                process, error
+            )
+        )
+        process.finished.connect(
+            lambda exit_code, exit_status, process=process: self._handle_scan_process_finished(
+                process, exit_code, exit_status
+            )
+        )
+        self._load_process = process
+        process.start()
+        timeout_seconds = self._config.scan_worker.timeout_seconds
+        if timeout_seconds is not None and timeout_seconds > 0:
+            self._scan_timeout_timer.start(timeout_seconds * 1000)
 
-    def _scan_directory_worker(
-        self, path: str, token: int, cancel_event: Event
+    def _read_scan_stdout(self, process: QProcess) -> None:
+        if process is not self._load_process:
+            return
+        self._load_stdout_buffer.extend(bytes(process.readAllStandardOutput()))
+
+    def _read_scan_stderr(self, process: QProcess) -> None:
+        if process is not self._load_process:
+            return
+        chunk = bytes(process.readAllStandardError()).decode("utf-8", "replace")
+        if not chunk:
+            return
+        self._load_stderr_buffer += chunk
+        self._load_stderr_partial += chunk
+        lines = self._load_stderr_partial.splitlines(keepends=True)
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            self._load_stderr_partial = lines.pop()
+        else:
+            self._load_stderr_partial = ""
+        for line in lines:
+            text = line.strip()
+            if text:
+                if self._debug:
+                    print(f"[sview scan] {text}", file=sys.stderr, flush=True)
+                self.statusBar().showMessage(text)
+
+    def _handle_scan_process_error(
+        self, process: QProcess, error: QProcess.ProcessError
     ) -> None:
-        scanner = DirectoryScanner()
+        if process is not self._load_process or self._load_cancelled:
+            return
+        if error is QProcess.ProcessError.FailedToStart:
+            message = process.errorString() or "Failed to start scan worker."
+            self._clear_scan_process()
+            self._handle_failed_scan(message)
 
-        def send_progress(message: str) -> None:
-            self._load_queue.put(("progress", token, message))
+    def _handle_scan_process_finished(
+        self, process: QProcess, exit_code: int, exit_status: QProcess.ExitStatus
+    ) -> None:
+        if process is not self._load_process:
+            return
+        self._read_scan_stdout(process)
+        self._read_scan_stderr(process)
+
+        response_text = (
+            bytes(self._load_stdout_buffer).decode("utf-8", "replace").strip()
+        )
+        error_text = f"{self._load_stderr_buffer}{self._load_stderr_partial}".strip()
+        cancelled = self._load_cancelled
+        timed_out = self._load_timed_out
+
+        self._clear_scan_process()
+
+        if timed_out:
+            self._handle_timed_out_scan(error_text)
+            return
+        if cancelled:
+            self._handle_cancelled_scan()
+            return
+        if exit_status is QProcess.ExitStatus.CrashExit:
+            self._handle_failed_scan(error_text or "Scan worker crashed.")
+            return
+        if exit_code != 0:
+            self._handle_failed_scan(
+                error_text or f"Scan worker exited with code {exit_code}."
+            )
+            return
+        if not response_text:
+            self._handle_failed_scan("Scan worker returned no data.")
+            return
 
         try:
-            result = scanner.scan(
-                path,
-                cancel_check=cancel_event.is_set,
-                progress_callback=send_progress,
-            )
-        except ScanCancelled:
-            self._load_queue.put(("cancelled", token, None))
+            result = ScanResult.from_dict(json.loads(response_text))
+        except (
+            TypeError,
+            ValueError,
+            KeyError,
+            AttributeError,
+            json.JSONDecodeError,
+        ) as exc:
+            self._handle_failed_scan(f"Invalid scan response: {exc}")
             return
-        except Exception as exc:  # pragma: no cover - UI failure path
-            self._load_queue.put(("failed", token, str(exc)))
-            return
-        self._load_queue.put(("finished", token, result))
-
-    def _process_worker_messages(self) -> None:
-        handled = False
-        while True:
-            try:
-                message_type, token, payload = self._load_queue.get_nowait()
-            except Empty:
-                break
-
-            handled = True
-            if token != self._load_token:
-                continue
-
-            if message_type == "progress":
-                self.statusBar().showMessage(str(payload))
-            elif message_type == "finished":
-                self._handle_finished_scan(payload)
-            elif message_type == "failed":
-                self._handle_failed_scan(str(payload))
-            elif message_type == "cancelled":
-                self._handle_cancelled_scan()
-
-        if handled and self._load_thread is None:
-            self._progress_timer.stop()
+        self._handle_finished_scan(result)
 
     def _handle_finished_scan(self, result: object) -> None:
         request = self._active_request
-        self._load_thread = None
-        self._load_cancel_event = None
         self._set_loading_state(False)
         if request is None or not isinstance(result, ScanResult):
             return
@@ -441,19 +589,53 @@ class MainWindow(QMainWindow):
         self._drain_pending_request()
 
     def _handle_failed_scan(self, error_message: str) -> None:
-        self._load_thread = None
-        self._load_cancel_event = None
         self._active_request = None
         self._set_loading_state(False)
+        if self._debug and error_message:
+            print(f"[sview error] {error_message}", file=sys.stderr, flush=True)
         self.statusBar().showMessage(f"Failed to load directory: {error_message}", 5000)
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Scan failed")
+        dialog.setText("Failed to load directory.")
+        dialog.setInformativeText(self._summarize_error_message(error_message))
+        details = error_message.strip()
+        if details and details != dialog.informativeText():
+            dialog.setDetailedText(details)
+        dialog.exec()
         self._drain_pending_request()
 
     def _handle_cancelled_scan(self) -> None:
-        self._load_thread = None
-        self._load_cancel_event = None
         self._active_request = None
         self._set_loading_state(False)
         self.statusBar().showMessage("Scan cancelled", 3000)
+        self._drain_pending_request()
+
+    def _handle_timed_out_scan(self, error_message: str) -> None:
+        self._active_request = None
+        self._set_loading_state(False)
+        timeout_seconds = self._config.scan_worker.timeout_seconds
+        summary = (
+            f"Scan exceeded {timeout_seconds} seconds and was stopped."
+            if timeout_seconds is not None
+            else "Scan timed out and was stopped."
+        )
+        if self._debug:
+            print(f"[sview error] {summary}", file=sys.stderr, flush=True)
+            if error_message:
+                print(error_message, file=sys.stderr, flush=True)
+        self.statusBar().showMessage(summary, 5000)
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Scan timed out")
+        dialog.setText(summary)
+        dialog.setInformativeText(
+            "This scan worker was terminated to protect system responsiveness."
+        )
+        details = error_message.strip()
+        if details:
+            dialog.setDetailedText(details)
+        dialog.exec()
         self._drain_pending_request()
 
     def _apply_filter(self, text: str) -> None:
@@ -469,11 +651,12 @@ class MainWindow(QMainWindow):
 
         self._visible_items = filtered
         self._table.set_items(filtered)
+        self._icon_view.set_items(filtered)
         self._inspector.clear_details()
         self._update_status_bar()
 
     def _sync_inspector(self) -> None:
-        item = self._table.current_browser_item()
+        item = self._current_browser_item()
         if item is None:
             self._inspector.clear_details()
             return
@@ -482,13 +665,13 @@ class MainWindow(QMainWindow):
             self._inspector.expand_button.setText("Collapse Sequence")
 
     def _activate_selected_item(self, *_args) -> None:
-        item = self._table.current_browser_item()
+        item = self._current_browser_item()
         if item is None:
             return
         self._activate_item(item)
 
     def _expand_or_collapse_selected_sequence(self) -> None:
-        item = self._inspector.current_item or self._table.current_browser_item()
+        item = self._inspector.current_item or self._current_browser_item()
         if item is None or item.item_type is not ItemType.SEQUENCE:
             return
         if (
@@ -506,21 +689,53 @@ class MainWindow(QMainWindow):
         )
 
     def _copy_selected_path(self) -> None:
-        item = self._inspector.current_item or self._table.current_browser_item()
+        item = self._inspector.current_item or self._current_browser_item()
         if item is None:
             return
         QGuiApplication.clipboard().setText(item.path)
         self.statusBar().showMessage(f"Copied path for {item.display_name}", 3000)
 
     def _copy_selected_pattern(self) -> None:
-        item = self._inspector.current_item or self._table.current_browser_item()
+        item = self._inspector.current_item or self._current_browser_item()
         if item is None or item.item_type is not ItemType.SEQUENCE:
             return
         QGuiApplication.clipboard().setText(item.display_name)
         self.statusBar().showMessage(f"Copied pattern {item.display_name}", 3000)
 
+    def _find_missing_for_selected_sequence(self) -> None:
+        item = self._inspector.current_item or self._current_browser_item()
+        if item is None or item.item_type is not ItemType.SEQUENCE:
+            return
+        data = self._run_sstat_json(item)
+        if data is None:
+            return
+        missing = self._coerce_missing_list(data.get("missing"))
+        item.missing = missing or None
+        self._table.update_item(item)
+        self._inspector.set_item(item)
+        self.statusBar().showMessage(
+            f"Loaded missing-frame data for {item.display_name}", 3000
+        )
+
+    def _get_size_for_selected_sequence(self) -> None:
+        item = self._inspector.current_item or self._current_browser_item()
+        if item is None or item.item_type is not ItemType.SEQUENCE:
+            return
+        data = self._run_sstat_json(item)
+        if data is None:
+            return
+        size_bytes = self._coerce_int(data.get("size_bytes")) or self._coerce_int(
+            data.get("size")
+        )
+        if size_bytes is not None:
+            item.size_bytes = size_bytes
+        self._table.update_item(item)
+        self._inspector.set_item(item)
+        self._update_status_bar()
+        self.statusBar().showMessage(f"Loaded size for {item.display_name}", 3000)
+
     def _open_selected_properties(self) -> None:
-        item = self._inspector.current_item or self._table.current_browser_item()
+        item = self._inspector.current_item or self._current_browser_item()
         if item is None:
             return
         self._open_properties(item)
@@ -612,21 +827,10 @@ class MainWindow(QMainWindow):
         self._expand_or_collapse_selected_sequence()
 
     def _run_sequence_sstat(self, item: BrowserItem) -> None:
-        executable = self._tool_path("sstat")
-        if executable is None:
+        data = self._run_sstat_json(item)
+        if data is None:
             return
-        completed = subprocess.run(
-            [executable, item.path, "--json"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if completed.returncode != 0:
-            QMessageBox.warning(
-                self, "sstat failed", completed.stderr.strip() or "sstat failed."
-            )
-            return
-        text = self._format_sstat_output(completed.stdout.strip())
+        text = self._format_sstat_output(json.dumps(data))
         QMessageBox.information(self, "Properties", text or "No output.")
 
     def _run_sequence_transfer(self, item: BrowserItem, tool_name: str) -> None:
@@ -688,7 +892,7 @@ class MainWindow(QMainWindow):
         self._update_navigation_buttons()
 
     def _update_navigation_buttons(self) -> None:
-        loading = self._load_thread is not None and self._load_thread.is_alive()
+        loading = self._is_loading()
         self._back_button.setEnabled(not loading and self._history_index > 0)
         self._up_button.setEnabled(
             not loading
@@ -715,8 +919,8 @@ class MainWindow(QMainWindow):
             not loading
             and self._controller.current_path.parent != self._controller.current_path
         )
-        self._group_toggle.setEnabled(not loading)
-        self._raw_toggle.setEnabled(not loading)
+        self._content_mode_toggle.setEnabled(not loading)
+        self._layout_mode_toggle.setEnabled(not loading)
         self._open_button.setEnabled(not loading)
         self._refresh_button.setEnabled(not loading)
         self._filter_input.setEnabled(not loading)
@@ -744,11 +948,26 @@ class MainWindow(QMainWindow):
 
     def _cancel_scan(self) -> None:
         self._pending_request = None
-        if self._load_cancel_event is None:
+        if self._load_process is None:
             return
-        self._load_cancel_event.set()
+        self._load_cancelled = True
         self._stop_button.setEnabled(False)
         self.statusBar().showMessage("Cancelling scan...")
+        self._load_process.kill()
+
+    def _handle_scan_timeout(self) -> None:
+        if self._load_process is None:
+            return
+        self._load_timed_out = True
+        self._stop_button.setEnabled(False)
+        self.statusBar().showMessage("Scan timed out, stopping worker...")
+        if self._debug:
+            print(
+                "[sview scan] timeout reached, killing worker",
+                file=sys.stderr,
+                flush=True,
+            )
+        self._load_process.kill()
 
     def _update_status_bar(self) -> None:
         count = len(self._visible_items)
@@ -760,6 +979,56 @@ class MainWindow(QMainWindow):
             f"{count} items, {self._format_size(total_size)}   |   {mode}   |   {self._controller.current_path}"
         )
         self._update_navigation_buttons()
+
+    def _run_sstat_json(self, item: BrowserItem) -> dict[str, object] | None:
+        executable = self._tool_path("sstat")
+        if executable is None:
+            return None
+        completed = subprocess.run(
+            [executable, item.path, "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            QMessageBox.warning(
+                self, "sstat failed", completed.stderr.strip() or "sstat failed."
+            )
+            return None
+        try:
+            return json.loads(completed.stdout.strip())
+        except json.JSONDecodeError:
+            QMessageBox.warning(
+                self, "sstat failed", "Received invalid JSON from sstat."
+            )
+            return None
+
+    @staticmethod
+    def _coerce_int(value: object) -> int | None:
+        try:
+            if value is None:
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _coerce_missing_list(cls, value: object) -> list[int]:
+        if not isinstance(value, list):
+            return []
+        frames: list[int] = []
+        for item in value:
+            if isinstance(item, list) and len(item) == 2:
+                start = cls._coerce_int(item[0])
+                end = cls._coerce_int(item[1])
+                if start is None or end is None:
+                    continue
+                frames.extend(range(start, end + 1))
+                continue
+            coerced = cls._coerce_int(item)
+            if coerced is not None:
+                frames.append(coerced)
+        return frames
 
     def _advance_busy_indicator(self) -> None:
         self._busy_value += self._busy_direction * 4
@@ -781,6 +1050,7 @@ class MainWindow(QMainWindow):
         sizes[1] += reclaimed
         sizes[2] = 0
         self._main_splitter.setSizes(sizes)
+        self._save_ui_state()
 
     def _collapse_tree(self) -> None:
         self._tree.collapseAll()
@@ -796,6 +1066,95 @@ class MainWindow(QMainWindow):
                 f"Returned to {self._controller.current_path.name} sequence view", 3000
             )
         return True
+
+    def _is_loading(self) -> bool:
+        return (
+            self._load_process is not None
+            and self._load_process.state() != QProcess.ProcessState.NotRunning
+        )
+
+    def _clear_scan_process(self) -> None:
+        self._scan_timeout_timer.stop()
+        if self._load_process is not None:
+            self._load_process.deleteLater()
+        self._load_process = None
+        self._load_stdout_buffer = bytearray()
+        self._load_stderr_buffer = ""
+        self._load_stderr_partial = ""
+        self._load_cancelled = False
+        self._load_timed_out = False
+
+    def _save_ui_state(self) -> None:
+        sidebar_width = self._sidebar_restore_width
+        if self._main_splitter is not None:
+            sizes = self._main_splitter.sizes()
+            if sizes and sizes[0] > 0:
+                sidebar_width = sizes[0]
+        state = {
+            "window_width": self.width(),
+            "window_height": self.height(),
+            "main_splitter_sizes": self._main_splitter.sizes()
+            if self._main_splitter is not None
+            else [self.SIDEBAR_WIDTH, 900, 0],
+            "center_view": "icons"
+            if not self._layout_mode_toggle.isChecked()
+            else "details",
+            "sidebar_expanded": self._sidebar_expanded,
+            "sidebar_width": sidebar_width,
+        }
+        try:
+            save_ui_state(state)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _coerce_splitter_sizes(value: object, default: list[int]) -> list[int]:
+        if not isinstance(value, list) or len(value) != len(default):
+            return list(default)
+        sizes: list[int] = []
+        for item in value:
+            try:
+                sizes.append(max(0, int(item)))
+            except (TypeError, ValueError):
+                return list(default)
+        return sizes
+
+    def _current_browser_item(self) -> BrowserItem | None:
+        if self._center_stack.currentWidget() is self._icon_view:
+            return self._icon_view.current_browser_item()
+        return self._table.current_browser_item()
+
+    def _toggle_sidebar(self, expanded: bool) -> None:
+        self._apply_sidebar_state(expanded)
+        self._save_ui_state()
+
+    def _apply_sidebar_state(self, expanded: bool) -> None:
+        if self._main_splitter is None:
+            self._sidebar_expanded = expanded
+            return
+        self._sidebar_expanded = expanded
+        self._tree_toggle.blockSignals(True)
+        self._tree_toggle.setChecked(expanded)
+        self._tree_toggle.blockSignals(False)
+        self._tree_toggle.setArrowType(
+            Qt.ArrowType.LeftArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        self._tree_toggle.setToolTip(
+            "Collapse folders" if expanded else "Expand folders"
+        )
+        sizes = self._main_splitter.sizes()
+        if len(sizes) < 3:
+            return
+        if expanded:
+            target = min(self.SIDEBAR_WIDTH, max(220, self._sidebar_restore_width))
+            sizes[1] = max(0, sizes[1] - target)
+            sizes[0] = target
+        else:
+            if sizes[0] > 0:
+                self._sidebar_restore_width = sizes[0]
+            sizes[1] += sizes[0]
+            sizes[0] = 0
+        self._main_splitter.setSizes(sizes)
 
     def _open_repo_page(self) -> None:
         QDesktopServices.openUrl(QUrl(get_repository_url()))
@@ -867,3 +1226,11 @@ class MainWindow(QMainWindow):
                 break
             size /= 1024.0
         return f"{size:.1f} {unit}"
+
+    @staticmethod
+    def _summarize_error_message(error_message: str) -> str:
+        lines = [line.strip() for line in error_message.splitlines() if line.strip()]
+        for line in reversed(lines):
+            if line.startswith("ERROR:"):
+                return line[len("ERROR:") :].strip()
+        return lines[-1] if lines else "Unknown scan error."

@@ -32,6 +32,12 @@ Print the version:
 sview --version
 ```
 
+Run with scanner debug output in the terminal:
+
+```bash
+sview --debug
+```
+
 ## Configuration
 
 On first launch, `sview` writes a user config file to:
@@ -40,5 +46,29 @@ On first launch, `sview` writes a user config file to:
 ~/.config/sview/config.json
 ```
 
+It also stores lightweight UI state in:
+
+```bash
+~/.config/sview/ui_state.json
+```
+
 This file controls default file and sequence handlers, including custom
 commands for double-click actions.
+
+It also contains scanner worker safety settings such as process priority and
+memory limit:
+
+```json
+{
+  "scanner": {
+    "worker": {
+      "nice_increment": 15,
+      "memory_limit_mb": null,
+      "timeout_seconds": 30
+    }
+  }
+}
+```
+
+`memory_limit_mb` is opt-in. Leave it as `null` unless you specifically want a hard
+address-space cap on the worker process.

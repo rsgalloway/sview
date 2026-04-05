@@ -70,6 +70,8 @@ class InspectorPanel(QWidget):
 
         self.copy_path_button = QPushButton("Copy Path")
         self.copy_pattern_button = QPushButton("Copy Pattern")
+        self.find_missing_button = QPushButton("Find Missing")
+        self.get_size_button = QPushButton("Get Size")
         self.expand_button = QPushButton("Expand Sequence")
         self.close_button = QPushButton()
         self.close_button.setIcon(
@@ -110,6 +112,10 @@ class InspectorPanel(QWidget):
         button_row.addWidget(self.copy_path_button)
         button_row.addWidget(self.copy_pattern_button)
         layout.addLayout(button_row)
+        metadata_row = QHBoxLayout()
+        metadata_row.addWidget(self.find_missing_button)
+        metadata_row.addWidget(self.get_size_button)
+        layout.addLayout(metadata_row)
         layout.addWidget(self.expand_button)
         self.clear_details()
 
@@ -130,6 +136,8 @@ class InspectorPanel(QWidget):
             label.setText("-")
         self.copy_path_button.setEnabled(False)
         self.copy_pattern_button.setEnabled(False)
+        self.find_missing_button.setEnabled(False)
+        self.get_size_button.setEnabled(False)
         self.expand_button.setEnabled(False)
         self.expand_button.setText("Expand Sequence")
 
@@ -150,6 +158,8 @@ class InspectorPanel(QWidget):
 
         self.copy_path_button.setEnabled(True)
         self.copy_pattern_button.setEnabled(item.item_type is ItemType.SEQUENCE)
+        self.find_missing_button.setEnabled(item.item_type is ItemType.SEQUENCE)
+        self.get_size_button.setEnabled(item.item_type is ItemType.SEQUENCE)
         self.expand_button.setEnabled(item.item_type is ItemType.SEQUENCE)
         self.expand_button.setText(
             "Expand Sequence"
@@ -194,4 +204,6 @@ class InspectorPanel(QWidget):
     def _format_modified(timestamp: float) -> str:
         from datetime import datetime
 
+        if timestamp <= 0:
+            return "-"
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")

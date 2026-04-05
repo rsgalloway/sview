@@ -67,22 +67,16 @@ class ContentsTable(QTableWidget):
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.verticalHeader().setVisible(False)
         self.horizontalHeader().setStretchLastSection(True)
-        self.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.horizontalHeader().setSectionResizeMode(
-            4, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.horizontalHeader().setSectionResizeMode(
-            5, QHeaderView.ResizeMode.ResizeToContents
-        )
+        header = self.horizontalHeader()
+        for column in range(len(self.HEADERS)):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+        self.setColumnWidth(0, 320)
+        self.setColumnWidth(1, 90)
+        self.setColumnWidth(2, 110)
+        self.setColumnWidth(3, 70)
+        self.setColumnWidth(4, 110)
+        self.setColumnWidth(5, 90)
+        self.setColumnWidth(6, 140)
         self.setShowGrid(False)
         self.setAlternatingRowColors(False)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -147,13 +141,30 @@ class ContentsTable(QTableWidget):
             self.setSortingEnabled(True)
             self.sortItems(0, Qt.SortOrder.AscendingOrder)
             self.horizontalHeader().setSortIndicator(0, Qt.SortOrder.AscendingOrder)
-            self.resizeColumnsToContents()
 
     def current_browser_item(self) -> BrowserItem | None:
         selected = self.selectedItems()
         if not selected:
             return None
         return selected[0].data(Qt.ItemDataRole.UserRole)
+
+    def update_item(self, item: BrowserItem) -> None:
+        for row in range(self.rowCount()):
+            row_item = self.item(row, 0)
+            if row_item is None:
+                continue
+            row_browser_item = row_item.data(Qt.ItemDataRole.UserRole)
+            if row_browser_item is None or row_browser_item.path != item.path:
+                continue
+            size_item = self.item(row, 5)
+            modified_item = self.item(row, 6)
+            if size_item is not None:
+                size_item.setText(self._format_size(item.size_bytes))
+                size_item.setData(Qt.ItemDataRole.UserRole, item)
+            if modified_item is not None:
+                modified_item.setText(self._format_mtime(item.modified_time))
+                modified_item.setData(Qt.ItemDataRole.UserRole, item)
+            return
 
     def _emit_context_request(self, position) -> None:
         item = None
@@ -207,4 +218,6 @@ class ContentsTable(QTableWidget):
 
     @staticmethod
     def _format_mtime(timestamp: float) -> str:
+        if timestamp <= 0:
+            return ""
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
