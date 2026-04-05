@@ -130,11 +130,6 @@ class DirectoryScanner:
 
         for entry in entries:
             self._raise_if_cancelled(cancel_check)
-            try:
-                stat = entry.stat()
-            except OSError:
-                continue
-
             is_directory = entry.is_dir()
             items.append(
                 BrowserItem(
@@ -146,8 +141,8 @@ class DirectoryScanner:
                     pad=None,
                     count=0 if is_directory else 1,
                     missing=None,
-                    size_bytes=0 if is_directory else stat.st_size,
-                    modified_time=stat.st_mtime,
+                    size_bytes=0,
+                    modified_time=0.0,
                     child_paths=None,
                 )
             )
@@ -183,21 +178,32 @@ class DirectoryScanner:
 
             child_paths = [str(member.path) for member in members]
             consumed_paths.update(child_paths)
-            frame_range = sequence.format("%R").strip("[]")
+            start_frame = int(getattr(members[0], "frame", 0) or 0)
+            end_frame = int(getattr(members[-1], "frame", 0) or 0)
+            if start_frame and end_frame:
+                frame_range = (
+                    str(start_frame)
+                    if start_frame == end_frame
+                    else f"{start_frame}-{end_frame}"
+                )
+            else:
+                frame_range = None
             pad_width = len(getattr(members[0], "digits", [""])[0]) if members else 0
-            pad_value = f"%0{pad_width}d" if pad_width else sequence.format("%p")
+            pad_value = f"%0{pad_width}d" if pad_width else "%d"
+            head = members[0].head
+            tail = members[0].tail
             grouped.append(
                 BrowserItem(
-                    path=str(sequence.path()),
+                    path=str(directory / f"{head}{pad_value}{tail}"),
                     item_type=ItemType.SEQUENCE,
-                    name=f"{sequence.head()}{pad_value}{sequence.tail()}",
-                    display_name=f"{sequence.head()}{pad_value}{sequence.tail()}",
+                    name=f"{head}{pad_value}{tail}",
+                    display_name=f"{head}{pad_value}{tail}",
                     frame_range=frame_range,
                     pad=pad_value,
                     count=len(sequence),
-                    missing=self._normalize_missing(sequence.missing()),
-                    size_bytes=int(sequence.size),
-                    modified_time=float(sequence.mtime),
+                    missing=None,
+                    size_bytes=0,
+                    modified_time=0.0,
                     child_paths=child_paths,
                 )
             )
@@ -219,15 +225,3 @@ class DirectoryScanner:
     def _raise_if_cancelled(cancel_check: Callable[[], bool] | None) -> None:
         if cancel_check is not None and cancel_check():
             raise ScanCancelled()
-
-    @staticmethod
-    def _normalize_missing(values: object) -> list[int]:
-        normalized: list[int] = []
-        if values is None:
-            return normalized
-        for value in values:
-            if isinstance(value, range):
-                normalized.extend(int(frame) for frame in value)
-            else:
-                normalized.append(int(value))
-        return normalized

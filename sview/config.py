@@ -56,7 +56,7 @@ class HandlerConfig:
 @dataclass
 class ScanWorkerConfig:
     nice_increment: int = 15
-    memory_limit_mb: int | None = 2048
+    memory_limit_mb: int | None = None
     timeout_seconds: int | None = 30
 
 
@@ -97,6 +97,7 @@ class AppConfig:
         handlers = data.get("handlers", {})
         scanner = data.get("scanner", {})
         worker = scanner.get("worker", {})
+        memory_limit_mb = cls._load_memory_limit(worker)
         needs_save = (
             "scanner" not in data
             or "worker" not in scanner
@@ -117,12 +118,7 @@ class AppConfig:
             ),
             scan_worker=ScanWorkerConfig(
                 nice_increment=int(worker.get("nice_increment", 15)),
-                memory_limit_mb=(
-                    int(worker["memory_limit_mb"])
-                    if "memory_limit_mb" in worker
-                    and worker.get("memory_limit_mb") is not None
-                    else (None if "memory_limit_mb" in worker else 2048)
-                ),
+                memory_limit_mb=memory_limit_mb,
                 timeout_seconds=(
                     int(worker["timeout_seconds"])
                     if "timeout_seconds" in worker
@@ -160,6 +156,21 @@ class AppConfig:
             },
         }
         CONFIG_PATH.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def _load_memory_limit(worker: dict[str, object]) -> int | None:
+        if "memory_limit_mb" not in worker:
+            return None
+
+        value = worker.get("memory_limit_mb")
+        if value is None:
+            return None
+
+        memory_limit_mb = int(value)
+        # Treat the old 0.1.2 default as "unset" because RLIMIT_AS proved too blunt.
+        if memory_limit_mb == 2048:
+            return None
+        return memory_limit_mb
 
 
 def build_command(command_template: str, path: str) -> list[str]:

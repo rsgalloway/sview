@@ -32,9 +32,9 @@ class DirectoryScannerTests(unittest.TestCase):
                 if item.item_type is ItemType.SEQUENCE
             )
             self.assertEqual(sequence.display_name, "shotA.%04d.exr")
-            self.assertEqual(sequence.frame_range, "1001-1002, 1004")
+            self.assertEqual(sequence.frame_range, "1001-1004")
             self.assertEqual(sequence.count, 3)
-            self.assertEqual(sequence.missing, [1003])
+            self.assertIsNone(sequence.missing)
             self.assertEqual(
                 sequence.child_paths,
                 [

@@ -35,8 +35,10 @@ Contains the MainWindow class which serves as the primary UI for sview.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
+from queue import Empty, Queue
 import subprocess
 import sys
 
@@ -68,6 +70,8 @@ from sview.scanner import ScanResult
 
 
 class MainWindow(QMainWindow):
+    SEQUENCE_METADATA_WORKERS = 4
+
     def __init__(
         self,
         controller: BrowserController | None = None,
@@ -94,6 +98,13 @@ class MainWindow(QMainWindow):
         self._load_stderr_partial = ""
         self._load_cancelled = False
         self._load_timed_out = False
+        self._metadata_executor = ThreadPoolExecutor(
+            max_workers=self.SEQUENCE_METADATA_WORKERS,
+            thread_name_prefix="sview-seqmeta",
+        )
+        self._metadata_queue: Queue[tuple[int, str, int, float]] = Queue()
+        self._metadata_token = 0
+        self._metadata_pending_count = 0
 
         self.setWindowTitle("sview")
         self.resize(1400, 800)
@@ -110,6 +121,9 @@ class MainWindow(QMainWindow):
         self._busy_timer = QTimer(self)
         self._busy_timer.setInterval(30)
         self._busy_timer.timeout.connect(self._advance_busy_indicator)
+        self._metadata_timer = QTimer(self)
+        self._metadata_timer.setInterval(30)
+        self._metadata_timer.timeout.connect(self._process_sequence_metadata_updates)
         self._scan_timeout_timer = QTimer(self)
         self._scan_timeout_timer.setSingleShot(True)
         self._scan_timeout_timer.timeout.connect(self._handle_scan_timeout)
@@ -290,6 +304,7 @@ class MainWindow(QMainWindow):
         if self._load_process is not None:
             self._load_process.kill()
             self._load_process.waitForFinished(500)
+        self._metadata_executor.shutdown(wait=False)
         event.accept()
 
     def _choose_directory(self) -> None:
@@ -360,6 +375,8 @@ class MainWindow(QMainWindow):
 
     def _request_directory(self, path: str | Path, add_to_history: bool) -> None:
         requested_path = str(self._normalize_path(path))
+        self._metadata_token += 1
+        self._metadata_pending_count = 0
         if self._is_loading():
             self._pending_request = (requested_path, add_to_history)
             self.statusBar().showMessage(f"Queued {requested_path}")
@@ -487,6 +504,7 @@ class MainWindow(QMainWindow):
 
         items = self._controller.apply_scan_result(result)
         self._visible_items = items
+        self._start_sequence_metadata_enrichment(result)
         if request[1]:
             self._push_history(str(result.path))
         self._active_request = None
@@ -864,6 +882,64 @@ class MainWindow(QMainWindow):
         )
         self._update_navigation_buttons()
 
+    def _start_sequence_metadata_enrichment(self, result: ScanResult) -> None:
+        self._metadata_pending_count = 0
+        self._metadata_timer.stop()
+        return
+
+    def _compute_sequence_metadata(
+        self,
+        token: int,
+        item_path: str,
+        child_paths: list[str],
+        raw_lookup: dict[str, BrowserItem],
+    ) -> None:
+        size_bytes = 0
+        modified_time = 0.0
+        for child_path in child_paths:
+            raw_item = raw_lookup.get(child_path)
+            if raw_item is None:
+                continue
+            size_bytes += raw_item.size_bytes
+            if raw_item.modified_time > modified_time:
+                modified_time = raw_item.modified_time
+        self._metadata_queue.put((token, item_path, size_bytes, modified_time))
+
+    def _process_sequence_metadata_updates(self) -> None:
+        handled = False
+        while True:
+            try:
+                (
+                    token,
+                    item_path,
+                    size_bytes,
+                    modified_time,
+                ) = self._metadata_queue.get_nowait()
+            except Empty:
+                break
+
+            handled = True
+            if token != self._metadata_token:
+                continue
+
+            self._metadata_pending_count = max(0, self._metadata_pending_count - 1)
+            item = self._controller.update_sequence_metadata(
+                item_path, size_bytes, modified_time
+            )
+            if item is None:
+                continue
+            self._table.update_item(item)
+            if (
+                self._inspector.current_item is not None
+                and self._inspector.current_item.path == item.path
+            ):
+                self._inspector.set_item(item)
+
+        if handled:
+            self._update_status_bar()
+        if self._metadata_pending_count == 0:
+            self._metadata_timer.stop()
+
     def _advance_busy_indicator(self) -> None:
         self._busy_value += self._busy_direction * 4
         if self._busy_value >= 100:
@@ -993,5 +1069,5 @@ class MainWindow(QMainWindow):
         lines = [line.strip() for line in error_message.splitlines() if line.strip()]
         for line in reversed(lines):
             if line.startswith("ERROR:"):
-                return line.removeprefix("ERROR:").strip()
+                return line[len("ERROR:") :].strip()
         return lines[-1] if lines else "Unknown scan error."

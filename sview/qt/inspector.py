@@ -194,4 +194,6 @@ class InspectorPanel(QWidget):
     def _format_modified(timestamp: float) -> str:
         from datetime import datetime
 
+        if timestamp <= 0:
+            return "-"
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")

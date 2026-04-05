@@ -57,9 +57,12 @@ memory limit:
   "scanner": {
     "worker": {
       "nice_increment": 15,
-      "memory_limit_mb": 2048,
+      "memory_limit_mb": null,
       "timeout_seconds": 30
     }
   }
 }
 ```
+
+`memory_limit_mb` is opt-in. Leave it as `null` unless you specifically want a hard
+address-space cap on the worker process.

@@ -107,6 +107,17 @@ class BrowserController:
         self._refresh_current_items()
         return self.current_items
 
+    def update_sequence_metadata(
+        self, item_path: str, size_bytes: int, modified_time: float
+    ) -> BrowserItem | None:
+        for item in self._grouped_items:
+            if item.path != item_path:
+                continue
+            item.size_bytes = size_bytes
+            item.modified_time = modified_time
+            return item
+        return None
+
     def _refresh_current_items(self) -> None:
         self._current_items = (
             self._grouped_items if self._grouped_view else self._raw_items
