@@ -229,6 +229,43 @@ def _apply_dark_theme(app: QApplication) -> None:
             background-color: #10161b;
             color: #b6c1ca;
         }
+        QWidget#breadcrumbBar {
+            background-color: #11181d;
+            border: 1px solid #1e2831;
+            border-radius: 5px;
+            padding: 1px 4px;
+        }
+        QToolButton#breadcrumbButton {
+            background: transparent;
+            border: 0;
+            color: #cfd8e0;
+            padding: 3px 6px;
+            border-radius: 4px;
+        }
+        QToolButton#breadcrumbButton:hover {
+            background-color: #1f2931;
+            color: #f2f6f9;
+        }
+        QLabel#breadcrumbSeparator {
+            color: #6f7e8b;
+            padding: 0 2px;
+        }
+        QLabel#loadingOverlay {
+            color: #8b99a5;
+            padding: 2px 0;
+        }
+        QProgressBar#loadingSpinner {
+            background: transparent;
+            border: 0;
+            min-width: 72px;
+            max-width: 72px;
+            min-height: 6px;
+            max-height: 6px;
+        }
+        QProgressBar#loadingSpinner::chunk {
+            background-color: #5f7f95;
+            border-radius: 3px;
+        }
         QSplitter::handle {
             background-color: #2c3740;
             width: 1px;
