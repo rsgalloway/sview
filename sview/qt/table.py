@@ -39,9 +39,10 @@ from datetime import datetime
 
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QHeaderView, QStyle, QTableWidget, QTableWidgetItem
+from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
 from sview.model import BrowserItem, ItemType
+from sview.qt.icons import browser_item_icon
 
 
 class ContentsTable(QTableWidget):
@@ -175,13 +176,7 @@ class ContentsTable(QTableWidget):
         self.context_requested.emit(item, self.viewport().mapToGlobal(position))
 
     def _item_icon(self, item: BrowserItem):
-        if item.item_type is ItemType.DIRECTORY:
-            return self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
-        if item.item_type is ItemType.SEQUENCE:
-            return self.style().standardIcon(
-                QStyle.StandardPixmap.SP_FileDialogDetailedView
-            )
-        return self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+        return browser_item_icon(item, size=18)
 
     @staticmethod
     def _type_label(item: BrowserItem) -> str:

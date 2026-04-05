@@ -113,6 +113,10 @@ class MainWindow(QMainWindow):
 
         self._filter_input = QLineEdit()
         self._filter_input.setPlaceholderText("Search")
+        self._filter_input.setObjectName("searchInput")
+        self._filter_input.setMinimumWidth(360)
+        self._filter_input.setMaximumWidth(460)
+        self._filter_input.setFixedHeight(34)
 
         self._table = ContentsTable()
         self._icon_view = ContentsIconView()
@@ -159,36 +163,42 @@ class MainWindow(QMainWindow):
         self.addAction(self._refresh_action)
 
         self._back_button = QPushButton()
+        self._back_button.setObjectName("navButton")
         self._back_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack)
         )
         self._back_button.setToolTip("Back")
         self._back_button.setFixedWidth(28)
         self._home_button = QPushButton()
+        self._home_button.setObjectName("navButton")
         self._home_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon)
         )
         self._home_button.setToolTip("Home")
         self._home_button.setFixedWidth(28)
         self._up_button = QPushButton()
+        self._up_button.setObjectName("navButton")
         self._up_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp)
         )
         self._up_button.setToolTip("Up")
         self._up_button.setFixedWidth(28)
         self._open_button = QPushButton()
+        self._open_button.setObjectName("navButton")
         self._open_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
         )
         self._open_button.setToolTip("Open Folder")
         self._open_button.setFixedWidth(32)
         self._refresh_button = QPushButton()
+        self._refresh_button.setObjectName("navButton")
         self._refresh_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
         )
         self._refresh_button.setToolTip("Refresh")
         self._refresh_button.setFixedWidth(32)
         self._content_mode_toggle = QPushButton()
+        self._content_mode_toggle.setObjectName("toolbarToggle")
         self._content_mode_toggle.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
         )
@@ -197,6 +207,7 @@ class MainWindow(QMainWindow):
         self._content_mode_toggle.setChecked(True)
         self._content_mode_toggle.setFixedWidth(32)
         self._layout_mode_toggle = QPushButton()
+        self._layout_mode_toggle.setObjectName("toolbarToggle")
         self._layout_mode_toggle.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
         )
@@ -207,6 +218,7 @@ class MainWindow(QMainWindow):
         )
         self._layout_mode_toggle.setFixedWidth(32)
         self._stop_button = QPushButton()
+        self._stop_button.setObjectName("toolbarToggle")
         self._stop_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserStop)
         )
@@ -243,23 +255,22 @@ class MainWindow(QMainWindow):
         center = QWidget()
         root_layout = QVBoxLayout(center)
         root_layout.setContentsMargins(8, 8, 8, 8)
-        root_layout.setSpacing(6)
+        root_layout.setSpacing(4)
 
         toolbar_row = QHBoxLayout()
-        toolbar_row.setSpacing(6)
+        toolbar_row.setSpacing(4)
         toolbar_row.addWidget(self._back_button)
         toolbar_row.addWidget(self._up_button)
         toolbar_row.addWidget(self._home_button)
         toolbar_row.addWidget(self._open_button)
         toolbar_row.addWidget(self._refresh_button)
-        toolbar_row.addSpacing(6)
+        toolbar_row.addSpacing(4)
         toolbar_row.addWidget(self._content_mode_toggle)
-        toolbar_row.addSpacing(6)
+        toolbar_row.addSpacing(4)
         toolbar_row.addWidget(self._layout_mode_toggle)
         toolbar_row.addWidget(self._stop_button)
         toolbar_row.addWidget(self._progress_bar)
         toolbar_row.addStretch(1)
-        self._filter_input.setMaximumWidth(320)
         toolbar_row.addWidget(self._filter_input)
         root_layout.addLayout(toolbar_row)
 
@@ -303,12 +314,13 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(2, 3)
         self._main_splitter = splitter
         splitter.setCollapsible(0, True)
-        splitter.setSizes(
-            self._coerce_splitter_sizes(
-                self._ui_state.get("main_splitter_sizes"),
-                [self._sidebar_restore_width, 900, 0],
-            )
+        initial_sizes = self._coerce_splitter_sizes(
+            self._ui_state.get("main_splitter_sizes"),
+            [self._sidebar_restore_width, 900, 0],
         )
+        if self._sidebar_expanded and initial_sizes[0] <= 0:
+            initial_sizes[0] = self._sidebar_restore_width
+        splitter.setSizes(initial_sizes)
         if not self._sidebar_expanded:
             self._apply_sidebar_state(False)
         root_layout.addWidget(splitter, 1)
@@ -763,10 +775,10 @@ class MainWindow(QMainWindow):
                 and self._controller.expanded_sequence.path == item.path
                 else "Expand Sequence"
             )
-            menu.addSeparator()
-            sstat_action = menu.addAction("sstat")
-            scopy_action = menu.addAction("scopy...")
-            smove_action = menu.addAction("smove...")
+            sequence_menu = menu.addMenu("Sequence")
+            sstat_action = sequence_menu.addAction("sstat")
+            scopy_action = sequence_menu.addAction("scopy...")
+            smove_action = sequence_menu.addAction("smove...")
 
         menu.addSeparator()
         properties_action = menu.addAction("Properties")
@@ -1086,16 +1098,18 @@ class MainWindow(QMainWindow):
 
     def _save_ui_state(self) -> None:
         sidebar_width = self._sidebar_restore_width
+        splitter_sizes = [self.SIDEBAR_WIDTH, 900, 0]
         if self._main_splitter is not None:
             sizes = self._main_splitter.sizes()
+            splitter_sizes = list(sizes)
             if sizes and sizes[0] > 0:
                 sidebar_width = sizes[0]
+            elif self._sidebar_expanded:
+                splitter_sizes[0] = sidebar_width
         state = {
             "window_width": self.width(),
             "window_height": self.height(),
-            "main_splitter_sizes": self._main_splitter.sizes()
-            if self._main_splitter is not None
-            else [self.SIDEBAR_WIDTH, 900, 0],
+            "main_splitter_sizes": splitter_sizes,
             "center_view": "icons"
             if not self._layout_mode_toggle.isChecked()
             else "details",
@@ -1147,7 +1161,11 @@ class MainWindow(QMainWindow):
             return
         if expanded:
             target = min(self.SIDEBAR_WIDTH, max(220, self._sidebar_restore_width))
-            sizes[1] = max(0, sizes[1] - target)
+            current_sidebar = sizes[0]
+            if current_sidebar <= 0:
+                sizes[1] = max(0, sizes[1] - target)
+            else:
+                sizes[1] = max(0, sizes[1] + current_sidebar - target)
             sizes[0] = target
         else:
             if sizes[0] > 0:

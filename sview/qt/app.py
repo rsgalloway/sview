@@ -87,16 +87,16 @@ def _wants_debug(args: list[str]) -> bool:
 
 def _apply_dark_theme(app: QApplication) -> None:
     palette = QPalette()
-    palette.setColor(QPalette.ColorRole.Window, QColor("#14191e"))
+    palette.setColor(QPalette.ColorRole.Window, QColor("#101519"))
     palette.setColor(QPalette.ColorRole.WindowText, QColor("#dbe2e8"))
-    palette.setColor(QPalette.ColorRole.Base, QColor("#11161b"))
-    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#171d22"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#0d1216"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#141b20"))
     palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#11161b"))
     palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#f2f5f8"))
     palette.setColor(QPalette.ColorRole.Text, QColor("#dbe2e8"))
-    palette.setColor(QPalette.ColorRole.Button, QColor("#1f262d"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#161d23"))
     palette.setColor(QPalette.ColorRole.ButtonText, QColor("#edf2f7"))
-    palette.setColor(QPalette.ColorRole.Highlight, QColor("#313b44"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#2a333b"))
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
     palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#75818d"))
     app.setPalette(palette)
@@ -106,35 +106,65 @@ def _apply_dark_theme(app: QApplication) -> None:
             font-size: 12px;
         }
         QTreeView, QTableWidget, QLineEdit, QPushButton, QLabel, QListWidget {
-            background-color: #1e252c;
+            background-color: #1b232a;
             color: #dbe2e8;
         }
+        QMenuBar {
+            background-color: #0f1519;
+            color: #d5dde4;
+            padding: 1px 4px;
+        }
+        QMenuBar::item {
+            background: transparent;
+            padding: 4px 8px;
+        }
+        QMenuBar::item:selected {
+            background-color: #1e272f;
+        }
+        QMenu {
+            background-color: #151c22;
+            color: #dbe2e8;
+            border: 1px solid #26303a;
+        }
+        QMenu::item {
+            padding: 6px 18px;
+        }
+        QMenu::item:selected {
+            background-color: #27313a;
+        }
         QMainWindow, QWidget#mainContent {
-            background-color: #13191f;
+            background-color: #0f1418;
             color: #dbe2e8;
         }
         QHeaderView::section {
-            background-color: #1e252c;
+            background-color: #171f26;
             color: #d4dde4;
             padding: 4px 6px;
             border: 0;
-            border-right: 1px solid #29333c;
+            border-right: 1px solid #222b33;
         }
         QTreeView, QTableWidget, QLineEdit, QListWidget {
-            background-color: #161d23;
-            border: 1px solid #222c34;
+            background-color: #141b20;
+            border: 1px solid #1f2830;
             border-radius: 3px;
         }
         QTreeView {
             background-color: #171f26;
         }
+        QLineEdit#searchInput {
+            background-color: #171e24;
+            border: 1px solid #202933;
+            border-radius: 6px;
+            padding: 0 12px;
+            font-size: 13px;
+        }
         QScrollBar:vertical {
-            background: #10161a;
+            background: #0e1317;
             width: 10px;
             margin: 2px;
         }
         QScrollBar::handle:vertical {
-            background: #36424c;
+            background: #34414a;
             min-height: 28px;
             border-radius: 4px;
         }
@@ -159,23 +189,33 @@ def _apply_dark_theme(app: QApplication) -> None:
             border: none;
         }
         QTableWidget::item:selected, QTreeView::item:selected {
-            background-color: #2c353d;
+            background-color: #273039;
             color: white;
         }
         QPushButton {
-            background-color: #20282f;
-            border: 1px solid #29333c;
+            background-color: #1a2127;
+            border: 1px solid #25303a;
             border-radius: 3px;
             padding: 4px 9px;
             min-height: 24px;
         }
+        QPushButton#navButton, QPushButton#toolbarToggle {
+            background-color: transparent;
+            border: 0;
+            border-radius: 5px;
+            padding: 0;
+            min-height: 28px;
+        }
+        QPushButton#navButton:hover, QPushButton#toolbarToggle:hover {
+            background-color: #1e262d;
+        }
         QPushButton:checked {
-            background-color: #2b3640;
+            background-color: #263039;
             border-color: #34414d;
         }
         QPushButton:disabled {
             color: #697581;
-            background-color: #1a2127;
+            background-color: #151b20;
         }
         QToolButton {
             background: transparent;
@@ -186,11 +226,11 @@ def _apply_dark_theme(app: QApplication) -> None:
             color: #d6dde4;
         }
         QStatusBar {
-            background-color: #141b20;
+            background-color: #10161b;
             color: #b6c1ca;
         }
         QSplitter::handle {
-            background-color: #36414a;
+            background-color: #2c3740;
             width: 1px;
         }
         QLabel#inspectorTitle {
@@ -202,13 +242,13 @@ def _apply_dark_theme(app: QApplication) -> None:
             margin-bottom: 6px;
         }
         QWidget#iconCard {
-            background-color: #1c232a;
-            border: 1px solid #252f37;
+            background-color: #182026;
+            border: 1px solid #202a32;
             border-radius: 6px;
         }
         QWidget#iconCard:hover {
-            background-color: #212a32;
-            border-color: #2f3b45;
+            background-color: #1d262e;
+            border-color: #2b3741;
         }
         QLabel#iconCardTitle {
             font-size: 13px;
