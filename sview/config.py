@@ -118,13 +118,13 @@ class AppConfig:
                 command=sequence_handler.get("command", ""),
             ),
             scan_worker=ScanWorkerConfig(
-                nice_increment=int(worker.get("nice_increment", 15)),
+                nice_increment=cls._coerce_int(worker.get("nice_increment"), 15),
                 memory_limit_mb=memory_limit_mb,
                 timeout_seconds=(
-                    int(worker["timeout_seconds"])
+                    None
                     if "timeout_seconds" in worker
-                    and worker.get("timeout_seconds") is not None
-                    else (None if "timeout_seconds" in worker else 30)
+                    and worker.get("timeout_seconds") is None
+                    else cls._coerce_int(worker.get("timeout_seconds"), 30)
                 ),
             ),
         )
@@ -167,11 +167,32 @@ class AppConfig:
         if value is None:
             return None
 
-        memory_limit_mb = int(value)
-        # Treat the old 0.1.2 default as "unset" because RLIMIT_AS proved too blunt.
+        memory_limit_mb = AppConfig._coerce_optional_int(value, None)
+        if memory_limit_mb is None:
+            return None
+        # Treat the old default memory cap from early 0.1.2 development as "unset"
+        # because RLIMIT_AS proved too blunt for normal scans.
         if memory_limit_mb == 2048:
             return None
         return memory_limit_mb
+
+    @staticmethod
+    def _coerce_int(value: object, default: int) -> int:
+        try:
+            if value is None:
+                return default
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _coerce_optional_int(value: object, default: int | None) -> int | None:
+        try:
+            if value is None:
+                return default
+            return int(value)
+        except (TypeError, ValueError):
+            return default
 
 
 def build_command(command_template: str, path: str) -> list[str]:

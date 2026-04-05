@@ -130,7 +130,10 @@ class DirectoryScanner:
 
         for entry in entries:
             self._raise_if_cancelled(cancel_check)
-            is_directory = entry.is_dir()
+            try:
+                is_directory = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
             items.append(
                 BrowserItem(
                     path=entry.path,
@@ -178,9 +181,11 @@ class DirectoryScanner:
 
             child_paths = [str(member.path) for member in members]
             consumed_paths.update(child_paths)
-            start_frame = int(getattr(members[0], "frame", 0) or 0)
-            end_frame = int(getattr(members[-1], "frame", 0) or 0)
-            if start_frame and end_frame:
+            start_frame = getattr(members[0], "frame", None)
+            end_frame = getattr(members[-1], "frame", None)
+            if start_frame is not None and end_frame is not None:
+                start_frame = int(start_frame)
+                end_frame = int(end_frame)
                 frame_range = (
                     str(start_frame)
                     if start_frame == end_frame
