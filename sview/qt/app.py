@@ -39,10 +39,11 @@ import sys
 from pathlib import Path
 
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from sview import __version__
 from sview.qt.main_window import MainWindow
+from sview.scanner import ensure_pyseq_available
 
 
 def main() -> int:
@@ -51,6 +52,12 @@ def main() -> int:
         return 0
 
     app = QApplication(sys.argv)
+    try:
+        ensure_pyseq_available()
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        QMessageBox.critical(None, "sview", str(exc))
+        return 1
     app.setApplicationName("sview")
     app.setApplicationVersion(__version__)
     app.setStyle("Fusion")

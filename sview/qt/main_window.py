@@ -107,6 +107,11 @@ class MainWindow(QMainWindow):
         self._progress_timer = QTimer(self)
         self._progress_timer.setInterval(50)
         self._progress_timer.timeout.connect(self._process_worker_messages)
+        self._busy_timer = QTimer(self)
+        self._busy_timer.setInterval(30)
+        self._busy_timer.timeout.connect(self._advance_busy_indicator)
+        self._busy_value = 0
+        self._busy_direction = 1
 
         self._build_toolbar()
         self._build_menu_bar()
@@ -174,11 +179,17 @@ class MainWindow(QMainWindow):
         self._raw_toggle.setToolTip("File View")
         self._raw_toggle.setCheckable(True)
         self._raw_toggle.setFixedWidth(32)
-        self._stop_button = QPushButton("Stop")
+        self._stop_button = QPushButton()
+        self._stop_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserStop)
+        )
+        self._stop_button.setToolTip("Stop")
+        self._stop_button.setFixedWidth(32)
         self._stop_button.setEnabled(False)
         self._progress_bar = QProgressBar()
-        self._progress_bar.setRange(0, 0)
-        self._progress_bar.setMaximumWidth(120)
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setMaximumWidth(84)
         self._progress_bar.setFixedHeight(12)
         self._progress_bar.setTextVisible(False)
         self._progress_bar.hide()
@@ -217,8 +228,8 @@ class MainWindow(QMainWindow):
         toolbar_row.addSpacing(6)
         toolbar_row.addWidget(self._group_toggle)
         toolbar_row.addWidget(self._raw_toggle)
-        toolbar_row.addWidget(self._progress_bar)
         toolbar_row.addWidget(self._stop_button)
+        toolbar_row.addWidget(self._progress_bar)
         toolbar_row.addStretch(1)
         self._filter_input.setMaximumWidth(320)
         toolbar_row.addWidget(self._filter_input)
@@ -713,6 +724,14 @@ class MainWindow(QMainWindow):
         self._table.setEnabled(not loading)
         self._stop_button.setEnabled(loading)
         self._progress_bar.setVisible(loading)
+        if loading:
+            self._busy_value = 0
+            self._busy_direction = 1
+            self._progress_bar.setValue(self._busy_value)
+            self._busy_timer.start()
+        else:
+            self._busy_timer.stop()
+            self._progress_bar.setValue(0)
         if loading and path is not None:
             self.statusBar().showMessage(f"Loading {path}...")
 
@@ -741,6 +760,16 @@ class MainWindow(QMainWindow):
             f"{count} items, {self._format_size(total_size)}   |   {mode}   |   {self._controller.current_path}"
         )
         self._update_navigation_buttons()
+
+    def _advance_busy_indicator(self) -> None:
+        self._busy_value += self._busy_direction * 4
+        if self._busy_value >= 100:
+            self._busy_value = 100
+            self._busy_direction = -1
+        elif self._busy_value <= 0:
+            self._busy_value = 0
+            self._busy_direction = 1
+        self._progress_bar.setValue(self._busy_value)
 
     def _close_inspector(self) -> None:
         if self._main_splitter is None:

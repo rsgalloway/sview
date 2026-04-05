@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 - 2026-04-05
+
+- Improved scanner responsiveness and stop/cancel behavior
+- Switched sequence scanning to require pyseq without fallback grouping
+- Continued UI and interaction polish across navigation, menus, and toolbar controls
+
 ## 0.1.0 - 2026-04-05
 
 - Initial desktop release of `sview`
