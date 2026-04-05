@@ -75,6 +75,22 @@ class DirectoryScannerTests(unittest.TestCase):
             )
             self.assertEqual(sequence.frame_range, "0-1")
 
+    def test_directory_symlink_stays_a_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            target = root / "target"
+            target.mkdir()
+            link = root / "linked-target"
+            link.symlink_to(target, target_is_directory=True)
+
+            result = DirectoryScanner().scan(root)
+
+            linked_item = next(
+                item for item in result.raw_items if item.name == link.name
+            )
+            self.assertIs(linked_item.item_type, ItemType.DIRECTORY)
+            self.assertEqual(linked_item.path, str(link))
+
     def test_controller_can_expand_and_collapse_sequence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
