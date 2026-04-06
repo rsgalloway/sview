@@ -410,6 +410,8 @@ class MainWindow(QMainWindow):
         self._table.filter_text_typed.connect(self._append_filter_text)
         self._table.filter_backspace_requested.connect(self._delete_filter_text)
         self._table.filter_clear_requested.connect(self._clear_filter_text)
+        self._table.activate_current_requested.connect(self._activate_selected_item)
+        self._table.navigate_up_requested.connect(self._go_up)
         self._icon_view.itemSelectionChanged.connect(self._sync_inspector)
         self._icon_view.itemActivated.connect(self._activate_selected_item)
         self._icon_view.context_requested.connect(self._show_item_context_menu)
@@ -1045,7 +1047,18 @@ class MainWindow(QMainWindow):
 
     def _sync_tree_to_path(self, path: str) -> None:
         model = self._tree.filesystem_model
-        index = model.index(path)
+        normalized = str(self._normalize_path(path))
+        root_index = self._tree.rootIndex()
+        root_path = model.filePath(root_index)
+        if root_path:
+            try:
+                Path(normalized).relative_to(Path(root_path))
+            except ValueError:
+                parent_path = str(Path(normalized).parent)
+                parent_index = model.index(parent_path)
+                if parent_index.isValid():
+                    self._tree.setRootIndex(parent_index)
+        index = model.index(normalized)
         if not index.isValid():
             return
         parent = index.parent()

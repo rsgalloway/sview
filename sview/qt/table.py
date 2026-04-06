@@ -67,6 +67,8 @@ class ContentsTable(QTableWidget):
     filter_text_typed = Signal(str)
     filter_backspace_requested = Signal()
     filter_clear_requested = Signal()
+    activate_current_requested = Signal()
+    navigate_up_requested = Signal()
 
     HEADERS = [
         "Name",
@@ -200,6 +202,16 @@ class ContentsTable(QTableWidget):
 
     def keyPressEvent(self, event) -> None:
         if self._handle_filter_key(event):
+            return
+        if event.key() == Qt.Key.Key_Left:
+            self.navigate_up_requested.emit()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Right:
+            current_item = self.current_browser_item()
+            if current_item is not None and current_item.item_type is not ItemType.FILE:
+                self.activate_current_requested.emit()
+            event.accept()
             return
         super().keyPressEvent(event)
 
