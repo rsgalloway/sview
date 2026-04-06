@@ -46,6 +46,7 @@ from PySide6.QtGui import (
     QCloseEvent,
     QDesktopServices,
     QGuiApplication,
+    QKeySequence,
     QPixmap,
 )
 from PySide6.QtWidgets import (
@@ -183,8 +184,11 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         self._open_action = QAction("Open Folder", self)
         self._refresh_action = QAction("Refresh", self)
+        self._find_missing_action = QAction("Find Missing", self)
+        self._find_missing_action.setShortcut(QKeySequence("Ctrl+M"))
         self.addAction(self._open_action)
         self.addAction(self._refresh_action)
+        self.addAction(self._find_missing_action)
 
         self._back_button = QPushButton()
         self._back_button.setObjectName("navButton")
@@ -392,6 +396,9 @@ class MainWindow(QMainWindow):
         self._preferences_action.triggered.connect(self._show_preferences_dialog)
         self._help_repo_action.triggered.connect(self._open_repo_page)
         self._help_about_action.triggered.connect(self._show_about_dialog)
+        self._find_missing_action.triggered.connect(
+            self._find_missing_for_selected_sequence
+        )
         self._open_button.clicked.connect(self._choose_directory)
         self._refresh_button.clicked.connect(self._refresh_directory)
         self._menu_button.clicked.connect(self._show_toolbar_menu)
@@ -863,6 +870,7 @@ class MainWindow(QMainWindow):
             item = updated_item
         item.missing = missing or None
         self._table.update_item(item)
+        self._icon_view.update_item(item)
         self._inspector.set_item(item)
         self.statusBar().showMessage(
             f"Loaded missing-frame data for {item.display_name}", 3000
@@ -897,6 +905,7 @@ class MainWindow(QMainWindow):
             item.size_bytes = size_bytes
         item.modified_time = modified_time
         self._table.update_item(item)
+        self._icon_view.update_item(item)
         self._inspector.set_item(item)
         self._update_status_bar()
         self.statusBar().showMessage(

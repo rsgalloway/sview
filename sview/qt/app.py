@@ -300,13 +300,32 @@ def _apply_dark_theme(app: QApplication) -> None:
             background-color: #1d262e;
             border-color: #2b3741;
         }
+        QWidget#iconCard[missing="true"] {
+            background-color: #2a211f;
+            border: 1px solid #4a3731;
+            border-radius: 6px;
+        }
+        QWidget#iconCard[missing="true"]:hover {
+            background-color: #332824;
+            border-color: #5a433b;
+        }
         QLabel#iconCardTitle {
             font-size: 13px;
             font-weight: 600;
             color: #eef3f7;
+            background: transparent;
         }
         QLabel#iconCardSubtitle {
             color: #99a8b3;
+            background: transparent;
+        }
+        QLabel#iconCardTitle[missing="true"] {
+            background: transparent;
+            color: #f3e7e2;
+        }
+        QLabel#iconCardSubtitle[missing="true"] {
+            background: transparent;
+            color: #ccb7ae;
         }
         """
     )

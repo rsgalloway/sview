@@ -99,7 +99,11 @@ class ContentsIconView(QListWidget):
             if browser_item is None or browser_item.path != item.path:
                 continue
             list_item.setData(Qt.ItemDataRole.UserRole, item)
-            self.setItemWidget(list_item, self._build_card(item))
+            card = self._build_card(item)
+            self.setItemWidget(list_item, card)
+            card.style().unpolish(card)
+            card.style().polish(card)
+            card.update()
             return
 
     def _emit_context_request(self, position) -> None:
@@ -120,6 +124,8 @@ class ContentsIconView(QListWidget):
     def _build_card(self, item: BrowserItem) -> QWidget:
         card = QWidget()
         card.setObjectName("iconCard")
+        if item.item_type is ItemType.SEQUENCE and item.missing_count:
+            card.setProperty("missing", True)
         layout = QHBoxLayout(card)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(14)
@@ -132,10 +138,14 @@ class ContentsIconView(QListWidget):
         name_label = QLabel(item.display_name)
         name_label.setObjectName("iconCardTitle")
         name_label.setWordWrap(True)
+        if item.item_type is ItemType.SEQUENCE and item.missing_count:
+            name_label.setProperty("missing", True)
 
         subtitle_label = QLabel(self._secondary_text(item))
         subtitle_label.setObjectName("iconCardSubtitle")
         subtitle_label.setWordWrap(True)
+        if item.item_type is ItemType.SEQUENCE and item.missing_count:
+            subtitle_label.setProperty("missing", True)
 
         text_layout = QVBoxLayout()
         text_layout.setContentsMargins(0, 0, 0, 0)
