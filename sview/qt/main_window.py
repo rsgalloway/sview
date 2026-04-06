@@ -41,7 +41,13 @@ import subprocess
 import sys
 
 from PySide6.QtCore import QPoint, QProcess, QTimer, Qt, QUrl
-from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QGuiApplication, QPixmap
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QDesktopServices,
+    QGuiApplication,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -72,6 +78,7 @@ from sview.config import (
 from sview.controller import BrowserController
 from sview.model import BrowserItem, ItemType
 from sview.qt.icon_view import ContentsIconView
+from sview.qt.icons import sidebar_icon
 from sview.qt.inspector import InspectorPanel
 from sview.qt.table import ContentsTable
 from sview.qt.tree import DirectoryTree
@@ -186,6 +193,13 @@ class MainWindow(QMainWindow):
         )
         self._back_button.setToolTip("Back")
         self._back_button.setFixedWidth(28)
+        self._sidebar_button = QPushButton()
+        self._sidebar_button.setObjectName("navButton")
+        self._sidebar_button.setFixedWidth(28)
+        self._sidebar_button.setIcon(sidebar_icon(self._sidebar_expanded, size=18))
+        self._sidebar_button.setToolTip(
+            "Collapse folders" if self._sidebar_expanded else "Show folders"
+        )
         self._home_button = QPushButton()
         self._home_button.setObjectName("navButton")
         self._home_button.setIcon(
@@ -280,6 +294,7 @@ class MainWindow(QMainWindow):
 
         toolbar_row = QHBoxLayout()
         toolbar_row.setSpacing(4)
+        toolbar_row.addWidget(self._sidebar_button)
         toolbar_row.addWidget(self._back_button)
         toolbar_row.addWidget(self._up_button)
         toolbar_row.addWidget(self._home_button)
@@ -380,6 +395,7 @@ class MainWindow(QMainWindow):
         self._open_button.clicked.connect(self._choose_directory)
         self._refresh_button.clicked.connect(self._refresh_directory)
         self._menu_button.clicked.connect(self._show_toolbar_menu)
+        self._sidebar_button.clicked.connect(self._toggle_sidebar_from_toolbar)
         self._back_button.clicked.connect(self._go_back)
         self._home_button.clicked.connect(self._go_home)
         self._up_button.clicked.connect(self._go_up)
@@ -764,13 +780,13 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self._edit_copy_path_action)
         edit_menu.addAction(self._edit_copy_pattern_action)
         edit_menu.addAction(self._edit_properties_action)
-        menu.addSeparator()
-        menu.addAction(self._show_hidden_action)
-        menu.addAction(self._preferences_action)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self._show_hidden_action)
+        edit_menu.addAction(self._preferences_action)
 
         help_menu = menu.addMenu("Help")
-        help_menu.addAction(self._help_repo_action)
         help_menu.addAction(self._help_about_action)
+        help_menu.addAction(self._help_repo_action)
         anchor = self._menu_button.mapToGlobal(self._menu_button.rect().bottomRight())
         menu_size = menu.sizeHint()
         menu.exec(anchor - QPoint(menu_size.width(), 0))
@@ -1293,11 +1309,18 @@ class MainWindow(QMainWindow):
         self._apply_sidebar_state(expanded)
         self._save_ui_state()
 
+    def _toggle_sidebar_from_toolbar(self) -> None:
+        self._toggle_sidebar(not self._sidebar_expanded)
+
     def _apply_sidebar_state(self, expanded: bool) -> None:
         if self._main_splitter is None:
             self._sidebar_expanded = expanded
             return
         self._sidebar_expanded = expanded
+        self._sidebar_button.setIcon(sidebar_icon(expanded, size=18))
+        self._sidebar_button.setToolTip(
+            "Collapse folders" if expanded else "Show folders"
+        )
         self._tree_toggle.blockSignals(True)
         self._tree_toggle.setChecked(expanded)
         self._tree_toggle.blockSignals(False)

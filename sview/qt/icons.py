@@ -51,6 +51,10 @@ def browser_item_icon(item: BrowserItem, size: int = 18) -> QIcon:
     return _file_icon(size)
 
 
+def sidebar_icon(expanded: bool, size: int = 18) -> QIcon:
+    return _sidebar_icon(expanded, size)
+
+
 @lru_cache(maxsize=12)
 def _folder_icon(size: int) -> QIcon:
     pixmap = QPixmap(size, size)
@@ -142,5 +146,48 @@ def _sequence_icon(size: int) -> QIcon:
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(QColor("#4d8fb5"))
     painter.drawRoundedRect(badge, 2, 2)
+    painter.end()
+    return QIcon(pixmap)
+
+
+@lru_cache(maxsize=24)
+def _sidebar_icon(expanded: bool, size: int) -> QIcon:
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+
+    outer = QRectF(size * 0.10, size * 0.16, size * 0.80, size * 0.68)
+    sidebar = QRectF(size * 0.14, size * 0.20, size * 0.20, size * 0.60)
+    content = QRectF(size * 0.38, size * 0.20, size * 0.48, size * 0.60)
+
+    painter.setBrush(QColor("#24303a"))
+    painter.drawRoundedRect(outer, 2.5, 2.5)
+    painter.setBrush(QColor("#d16f6f") if expanded else QColor("#485663"))
+    painter.drawRoundedRect(sidebar, 2, 2)
+    painter.setBrush(QColor("#d8e0e7"))
+    painter.drawRoundedRect(content, 2, 2)
+
+    painter.setPen(QPen(QColor("#34414c"), max(1, size // 16)))
+    if expanded:
+        painter.drawLine(
+            QPointF(size * 0.24, size * 0.42),
+            QPointF(size * 0.18, size * 0.50),
+        )
+        painter.drawLine(
+            QPointF(size * 0.18, size * 0.50),
+            QPointF(size * 0.24, size * 0.58),
+        )
+    else:
+        painter.drawLine(
+            QPointF(size * 0.18, size * 0.42),
+            QPointF(size * 0.24, size * 0.50),
+        )
+        painter.drawLine(
+            QPointF(size * 0.24, size * 0.50),
+            QPointF(size * 0.18, size * 0.58),
+        )
     painter.end()
     return QIcon(pixmap)
