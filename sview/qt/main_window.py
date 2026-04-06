@@ -40,8 +40,15 @@ from pathlib import Path
 import subprocess
 import sys
 
-from PySide6.QtCore import QProcess, QTimer, Qt, QUrl
-from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QGuiApplication
+from PySide6.QtCore import QPoint, QProcess, QTimer, Qt, QUrl
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QDesktopServices,
+    QGuiApplication,
+    QKeySequence,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -54,7 +61,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QStackedWidget,
-    QProgressBar,
     QStyle,
     QToolButton,
     QVBoxLayout,
@@ -73,10 +79,11 @@ from sview.config import (
 from sview.controller import BrowserController
 from sview.model import BrowserItem, ItemType
 from sview.qt.icon_view import ContentsIconView
+from sview.qt.icons import sidebar_icon
 from sview.qt.inspector import InspectorPanel
 from sview.qt.table import ContentsTable
 from sview.qt.tree import DirectoryTree
-from sview.scanner import ScanResult
+from sview.scanner import ScanResult, pyseq
 
 
 class MainWindow(QMainWindow):
@@ -109,6 +116,7 @@ class MainWindow(QMainWindow):
         self._load_stderr_partial = ""
         self._load_cancelled = False
         self._load_timed_out = False
+        self._focus_after_load = "browser"
 
         self.setWindowTitle("sview")
         self.resize(1400, 800)
@@ -136,7 +144,10 @@ class MainWindow(QMainWindow):
         self._inspector = InspectorPanel()
         self._tree_title = QLabel("Folders")
         self._tree_toggle = QToolButton()
-        self._tree = DirectoryTree(self._initial_path)
+        self._show_hidden_files = bool(self._ui_state.get("show_hidden_files", False))
+        self._tree = DirectoryTree(
+            self._initial_path, show_hidden=self._show_hidden_files
+        )
         self._main_splitter: QSplitter | None = None
         self._sidebar_expanded = bool(self._ui_state.get("sidebar_expanded", True))
         self._sidebar_restore_width = (
@@ -173,8 +184,11 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         self._open_action = QAction("Open Folder", self)
         self._refresh_action = QAction("Refresh", self)
+        self._find_missing_action = QAction("Find Missing", self)
+        self._find_missing_action.setShortcut(QKeySequence("Ctrl+M"))
         self.addAction(self._open_action)
         self.addAction(self._refresh_action)
+        self.addAction(self._find_missing_action)
 
         self._back_button = QPushButton()
         self._back_button.setObjectName("navButton")
@@ -183,6 +197,13 @@ class MainWindow(QMainWindow):
         )
         self._back_button.setToolTip("Back")
         self._back_button.setFixedWidth(28)
+        self._sidebar_button = QPushButton()
+        self._sidebar_button.setObjectName("navButton")
+        self._sidebar_button.setFixedWidth(28)
+        self._sidebar_button.setIcon(sidebar_icon(self._sidebar_expanded, size=18))
+        self._sidebar_button.setToolTip(
+            "Collapse folders" if self._sidebar_expanded else "Show folders"
+        )
         self._home_button = QPushButton()
         self._home_button.setObjectName("navButton")
         self._home_button.setIcon(
@@ -239,6 +260,11 @@ class MainWindow(QMainWindow):
         self._stop_button.setToolTip("Stop")
         self._stop_button.setFixedWidth(32)
         self._stop_button.setEnabled(False)
+        self._menu_button = QPushButton()
+        self._menu_button.setObjectName("toolbarToggle")
+        self._menu_button.setText("≡")
+        self._menu_button.setToolTip("Menu")
+        self._menu_button.setFixedWidth(32)
 
     def _build_menu_bar(self) -> None:
         menu_bar = self.menuBar()
@@ -254,9 +280,15 @@ class MainWindow(QMainWindow):
         self._edit_copy_path_action = edit_menu.addAction("Copy Path")
         self._edit_copy_pattern_action = edit_menu.addAction("Copy Pattern")
         self._edit_properties_action = edit_menu.addAction("Properties")
+        edit_menu.addSeparator()
+        self._show_hidden_action = edit_menu.addAction("Show Hidden Files")
+        self._show_hidden_action.setCheckable(True)
+        self._show_hidden_action.setChecked(self._show_hidden_files)
+        self._preferences_action = edit_menu.addAction("Preferences")
 
         self._help_about_action = help_menu.addAction("About")
         self._help_repo_action = help_menu.addAction("GitHub Repo")
+        menu_bar.hide()
 
     def _build_layout(self) -> None:
         center = QWidget()
@@ -266,6 +298,7 @@ class MainWindow(QMainWindow):
 
         toolbar_row = QHBoxLayout()
         toolbar_row.setSpacing(4)
+        toolbar_row.addWidget(self._sidebar_button)
         toolbar_row.addWidget(self._back_button)
         toolbar_row.addWidget(self._up_button)
         toolbar_row.addWidget(self._home_button)
@@ -281,6 +314,7 @@ class MainWindow(QMainWindow):
         )
         toolbar_row.addWidget(self._breadcrumb_bar, 1)
         toolbar_row.addWidget(self._filter_input)
+        toolbar_row.addWidget(self._menu_button)
         root_layout.addLayout(toolbar_row)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -358,10 +392,17 @@ class MainWindow(QMainWindow):
         self._edit_copy_path_action.triggered.connect(self._copy_selected_path)
         self._edit_copy_pattern_action.triggered.connect(self._copy_selected_pattern)
         self._edit_properties_action.triggered.connect(self._open_selected_properties)
+        self._show_hidden_action.toggled.connect(self._toggle_show_hidden_files)
+        self._preferences_action.triggered.connect(self._show_preferences_dialog)
         self._help_repo_action.triggered.connect(self._open_repo_page)
         self._help_about_action.triggered.connect(self._show_about_dialog)
+        self._find_missing_action.triggered.connect(
+            self._find_missing_for_selected_sequence
+        )
         self._open_button.clicked.connect(self._choose_directory)
         self._refresh_button.clicked.connect(self._refresh_directory)
+        self._menu_button.clicked.connect(self._show_toolbar_menu)
+        self._sidebar_button.clicked.connect(self._toggle_sidebar_from_toolbar)
         self._back_button.clicked.connect(self._go_back)
         self._home_button.clicked.connect(self._go_home)
         self._up_button.clicked.connect(self._go_up)
@@ -376,6 +417,8 @@ class MainWindow(QMainWindow):
         self._table.filter_text_typed.connect(self._append_filter_text)
         self._table.filter_backspace_requested.connect(self._delete_filter_text)
         self._table.filter_clear_requested.connect(self._clear_filter_text)
+        self._table.activate_current_requested.connect(self._activate_selected_item)
+        self._table.navigate_up_requested.connect(self._go_up)
         self._icon_view.itemSelectionChanged.connect(self._sync_inspector)
         self._icon_view.itemActivated.connect(self._activate_selected_item)
         self._icon_view.context_requested.connect(self._show_item_context_menu)
@@ -481,6 +524,7 @@ class MainWindow(QMainWindow):
         index = self._tree.currentIndex()
         path = self._tree.filesystem_model.filePath(index)
         if path:
+            self._focus_after_load = "tree"
             self._request_directory(path, add_to_history=True)
 
     def _request_directory(self, path: str | Path, add_to_history: bool) -> None:
@@ -625,7 +669,11 @@ class MainWindow(QMainWindow):
         self._update_breadcrumbs(result.path)
         self._filter_input.clear()
         self._apply_filter("")
-        QTimer.singleShot(0, self._focus_active_browser)
+        if self._focus_after_load == "tree":
+            QTimer.singleShot(0, self._focus_tree)
+        else:
+            QTimer.singleShot(0, self._focus_active_browser)
+        self._focus_after_load = "browser"
         self._drain_pending_request()
 
     def _handle_failed_scan(self, error_message: str) -> None:
@@ -688,6 +736,8 @@ class MainWindow(QMainWindow):
                 for item in self._controller.current_items
                 if needle in item.display_name.lower()
             ]
+        if not self._show_hidden_files:
+            filtered = [item for item in filtered if not self._is_hidden_item(item)]
 
         self._visible_items = filtered
         self._table.set_items(filtered)
@@ -720,6 +770,43 @@ class MainWindow(QMainWindow):
 
     def _update_filter_clear_action(self, text: str) -> None:
         self._clear_filter_action.setVisible(bool(text))
+
+    def _toggle_show_hidden_files(self, enabled: bool) -> None:
+        self._show_hidden_files = enabled
+        self._tree.set_show_hidden(enabled)
+        self._apply_filter(self._filter_input.text())
+        self._save_ui_state()
+
+    def _show_toolbar_menu(self) -> None:
+        menu = QMenu(self)
+        file_menu = menu.addMenu("File")
+        file_menu.addAction(self._file_open_action)
+        file_menu.addAction(self._file_refresh_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self._file_quit_action)
+
+        edit_menu = menu.addMenu("Edit")
+        edit_menu.addAction(self._edit_copy_path_action)
+        edit_menu.addAction(self._edit_copy_pattern_action)
+        edit_menu.addAction(self._edit_properties_action)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self._show_hidden_action)
+        edit_menu.addAction(self._preferences_action)
+
+        help_menu = menu.addMenu("Help")
+        help_menu.addAction(self._help_about_action)
+        help_menu.addAction(self._help_repo_action)
+        anchor = self._menu_button.mapToGlobal(self._menu_button.rect().bottomRight())
+        menu_size = menu.sizeHint()
+        menu.exec(anchor - QPoint(menu_size.width(), 0))
+
+    def _show_preferences_dialog(self) -> None:
+        QMessageBox.information(
+            self,
+            "Preferences",
+            "Preferences are currently stored in ~/.config/sview.\n\n"
+            "More settings can be added here in a future pass.",
+        )
 
     def _sync_inspector(self) -> None:
         item = self._current_browser_item()
@@ -776,8 +863,14 @@ class MainWindow(QMainWindow):
         if data is None:
             return
         missing = self._coerce_missing_list(data.get("missing"))
+        updated_item = self._controller.update_sequence_metadata(
+            item.path, missing=missing or []
+        )
+        if updated_item is not None:
+            item = updated_item
         item.missing = missing or None
         self._table.update_item(item)
+        self._icon_view.update_item(item)
         self._inspector.set_item(item)
         self.statusBar().showMessage(
             f"Loaded missing-frame data for {item.display_name}", 3000
@@ -793,12 +886,31 @@ class MainWindow(QMainWindow):
         size_bytes = self._coerce_int(data.get("size_bytes")) or self._coerce_int(
             data.get("size")
         )
+        modified_time = item.modified_time
+        if item.child_paths:
+            modified_time = max(
+                (
+                    Path(child_path).stat().st_mtime
+                    for child_path in item.child_paths
+                    if Path(child_path).exists()
+                ),
+                default=modified_time,
+            )
+        updated_item = self._controller.update_sequence_metadata(
+            item.path, size_bytes=size_bytes, modified_time=modified_time
+        )
+        if updated_item is not None:
+            item = updated_item
         if size_bytes is not None:
             item.size_bytes = size_bytes
+        item.modified_time = modified_time
         self._table.update_item(item)
+        self._icon_view.update_item(item)
         self._inspector.set_item(item)
         self._update_status_bar()
-        self.statusBar().showMessage(f"Loaded size for {item.display_name}", 3000)
+        self.statusBar().showMessage(
+            f"Loaded size and modified time for {item.display_name}", 3000
+        )
 
     def _open_selected_properties(self) -> None:
         item = self._inspector.current_item or self._current_browser_item()
@@ -967,7 +1079,18 @@ class MainWindow(QMainWindow):
 
     def _sync_tree_to_path(self, path: str) -> None:
         model = self._tree.filesystem_model
-        index = model.index(path)
+        normalized = str(self._normalize_path(path))
+        root_index = self._tree.rootIndex()
+        root_path = model.filePath(root_index)
+        if root_path:
+            try:
+                Path(normalized).relative_to(Path(root_path))
+            except ValueError:
+                parent_path = str(Path(normalized).parent)
+                parent_index = model.index(parent_path)
+                if parent_index.isValid():
+                    self._tree.setRootIndex(parent_index)
+        index = model.index(normalized)
         if not index.isValid():
             return
         parent = index.parent()
@@ -1046,8 +1169,9 @@ class MainWindow(QMainWindow):
         executable = self._tool_path("sstat")
         if executable is None:
             return None
+        target = self._sequence_stat_target(item)
         completed = subprocess.run(
-            [executable, item.path, "--json"],
+            [executable, target, "--json"],
             capture_output=True,
             text=True,
             check=False,
@@ -1064,6 +1188,21 @@ class MainWindow(QMainWindow):
                 self, "sstat failed", "Received invalid JSON from sstat."
             )
             return None
+
+    def _sequence_stat_target(self, item: BrowserItem) -> str:
+        if (
+            item.item_type is not ItemType.SEQUENCE
+            or not item.child_paths
+            or pyseq is None
+        ):
+            return item.path
+        try:
+            sequences = pyseq.get_sequences(item.child_paths)
+            if sequences:
+                return sequences[0].format("%D%h%p%t")
+        except Exception:
+            pass
+        return item.path
 
     @staticmethod
     def _coerce_int(value: object) -> int | None:
@@ -1155,6 +1294,7 @@ class MainWindow(QMainWindow):
             else "details",
             "sidebar_expanded": self._sidebar_expanded,
             "sidebar_width": sidebar_width,
+            "show_hidden_files": self._show_hidden_files,
         }
         try:
             save_ui_state(state)
@@ -1182,6 +1322,10 @@ class MainWindow(QMainWindow):
         widget = self._center_stack.currentWidget()
         if widget is not None and widget.isEnabled():
             widget.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _focus_tree(self) -> None:
+        if self._tree.isEnabled():
+            self._tree.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _update_breadcrumbs(self, path: Path) -> None:
         while self._breadcrumb_layout.count():
@@ -1218,15 +1362,26 @@ class MainWindow(QMainWindow):
 
         self._breadcrumb_layout.addStretch(1)
 
+    @staticmethod
+    def _is_hidden_item(item: BrowserItem) -> bool:
+        return Path(item.path).name.startswith(".")
+
     def _toggle_sidebar(self, expanded: bool) -> None:
         self._apply_sidebar_state(expanded)
         self._save_ui_state()
+
+    def _toggle_sidebar_from_toolbar(self) -> None:
+        self._toggle_sidebar(not self._sidebar_expanded)
 
     def _apply_sidebar_state(self, expanded: bool) -> None:
         if self._main_splitter is None:
             self._sidebar_expanded = expanded
             return
         self._sidebar_expanded = expanded
+        self._sidebar_button.setIcon(sidebar_icon(expanded, size=18))
+        self._sidebar_button.setToolTip(
+            "Collapse folders" if expanded else "Show folders"
+        )
         self._tree_toggle.blockSignals(True)
         self._tree_toggle.setChecked(expanded)
         self._tree_toggle.blockSignals(False)
@@ -1258,11 +1413,23 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl(get_repository_url()))
 
     def _show_about_dialog(self) -> None:
-        QMessageBox.about(
-            self,
-            "About sview",
-            f"sview {__version__}\n\nSequence-aware filesystem browser.",
-        )
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("About sview")
+        dialog.setText(f"sview {__version__}")
+        dialog.setInformativeText("Sequence-aware filesystem browser.")
+        icon_path = Path(__file__).with_name("sview_icon.png")
+        if icon_path.exists():
+            pixmap = QPixmap(str(icon_path))
+            if not pixmap.isNull():
+                dialog.setIconPixmap(
+                    pixmap.scaled(
+                        96,
+                        96,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+        dialog.exec()
 
     def _format_sstat_output(self, raw_output: str) -> str:
         try:

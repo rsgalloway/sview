@@ -38,7 +38,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from sview import __version__
@@ -61,10 +61,12 @@ def main() -> int:
         return 1
     app.setApplicationName("sview")
     app.setApplicationVersion(__version__)
+    app.setWindowIcon(_app_icon())
     app.setStyle("Fusion")
     _apply_dark_theme(app)
     initial_path = _parse_initial_path(sys.argv[1:])
     window = MainWindow(initial_path=initial_path, debug=debug)
+    window.setWindowIcon(_app_icon())
     window.show()
     return app.exec()
 
@@ -83,6 +85,10 @@ def _wants_version(args: list[str]) -> bool:
 
 def _wants_debug(args: list[str]) -> bool:
     return "--debug" in args
+
+
+def _app_icon() -> QIcon:
+    return QIcon(str(Path(__file__).with_name("sview_icon.png")))
 
 
 def _apply_dark_theme(app: QApplication) -> None:
@@ -294,13 +300,32 @@ def _apply_dark_theme(app: QApplication) -> None:
             background-color: #1d262e;
             border-color: #2b3741;
         }
+        QWidget#iconCard[missing="true"] {
+            background-color: #2a211f;
+            border: 1px solid #4a3731;
+            border-radius: 6px;
+        }
+        QWidget#iconCard[missing="true"]:hover {
+            background-color: #332824;
+            border-color: #5a433b;
+        }
         QLabel#iconCardTitle {
             font-size: 13px;
             font-weight: 600;
             color: #eef3f7;
+            background: transparent;
         }
         QLabel#iconCardSubtitle {
             color: #99a8b3;
+            background: transparent;
+        }
+        QLabel#iconCardTitle[missing="true"] {
+            background: transparent;
+            color: #f3e7e2;
+        }
+        QLabel#iconCardSubtitle[missing="true"] {
+            background: transparent;
+            color: #ccb7ae;
         }
         """
     )

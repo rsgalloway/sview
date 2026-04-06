@@ -37,11 +37,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QDir
+from PySide6.QtCore import QDir, Qt
 from PySide6.QtWidgets import QFileSystemModel, QTreeView
 
 
 class DirectoryModel(QFileSystemModel):
+    def __init__(self, *args, show_hidden: bool = False, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._show_hidden = show_hidden
+        self._apply_filter()
+
     def hasChildren(self, parent) -> bool:  # type: ignore[override]
         if not parent.isValid():
             return True
@@ -51,16 +56,28 @@ class DirectoryModel(QFileSystemModel):
             return False
 
         directory = QDir(file_info.absoluteFilePath())
-        children = directory.entryList(QDir.AllDirs | QDir.NoDotAndDotDot)
+        flags = QDir.AllDirs | QDir.NoDotAndDotDot
+        if self._show_hidden:
+            flags |= QDir.Hidden
+        children = directory.entryList(flags)
         return bool(children)
+
+    def set_show_hidden(self, enabled: bool) -> None:
+        self._show_hidden = enabled
+        self._apply_filter()
+
+    def _apply_filter(self) -> None:
+        flags = QDir.AllDirs | QDir.NoDotAndDotDot
+        if self._show_hidden:
+            flags |= QDir.Hidden
+        self.setFilter(flags)
 
 
 class DirectoryTree(QTreeView):
-    def __init__(self, root_path: str | Path) -> None:
+    def __init__(self, root_path: str | Path, show_hidden: bool = False) -> None:
         super().__init__()
-        self._model = DirectoryModel(self)
+        self._model = DirectoryModel(self, show_hidden=show_hidden)
         self._model.setRootPath(str(root_path))
-        self._model.setFilter(QDir.AllDirs | QDir.NoDotAndDotDot)
         self.setModel(self._model)
         self.setRootIndex(self._model.index(str(root_path)))
         self.setUniformRowHeights(True)
@@ -71,3 +88,40 @@ class DirectoryTree(QTreeView):
     @property
     def filesystem_model(self) -> QFileSystemModel:
         return self._model
+
+    def set_show_hidden(self, enabled: bool) -> None:
+        self._model.set_show_hidden(enabled)
+
+    def keyPressEvent(self, event) -> None:
+        current = self.currentIndex()
+        if event.key() == Qt.Key.Key_Up:
+            target = self.indexAbove(current)
+            if target.isValid():
+                self.setCurrentIndex(target)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Down:
+            target = self.indexBelow(current)
+            if target.isValid():
+                self.setCurrentIndex(target)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Left:
+            if current.isValid() and self.isExpanded(current):
+                self.collapse(current)
+            elif current.isValid():
+                parent = current.parent()
+                if parent.isValid():
+                    self.setCurrentIndex(parent)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Right:
+            if current.isValid():
+                if self.model().hasChildren(current):
+                    self.expand(current)
+                    child = self.model().index(0, 0, current)
+                    if child.isValid():
+                        self.setCurrentIndex(child)
+            event.accept()
+            return
+        super().keyPressEvent(event)

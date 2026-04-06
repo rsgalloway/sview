@@ -132,6 +132,7 @@ class DirectoryScanner:
             self._raise_if_cancelled(cancel_check)
             try:
                 is_directory = entry.is_dir()
+                stat_result = entry.stat()
             except OSError:
                 continue
             items.append(
@@ -144,8 +145,8 @@ class DirectoryScanner:
                     pad=None,
                     count=0 if is_directory else 1,
                     missing=None,
-                    size_bytes=0,
-                    modified_time=0.0,
+                    size_bytes=0 if is_directory else int(stat_result.st_size),
+                    modified_time=float(stat_result.st_mtime),
                     child_paths=None,
                 )
             )
