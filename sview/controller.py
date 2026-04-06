@@ -52,6 +52,7 @@ class BrowserController:
         self._current_items: list[BrowserItem] = []
         self._raw_items: list[BrowserItem] = []
         self._grouped_items: list[BrowserItem] = []
+        self._sequence_metadata_cache: dict[str, dict[str, object]] = {}
         self._grouped_view = True
         self._expanded_sequence: BrowserItem | None = None
 
@@ -103,18 +104,34 @@ class BrowserController:
         self._current_path = result.path
         self._grouped_items = result.grouped_items
         self._raw_items = result.raw_items
+        self._apply_cached_sequence_metadata()
         self._expanded_sequence = None
         self._refresh_current_items()
         return self.current_items
 
     def update_sequence_metadata(
-        self, item_path: str, size_bytes: int, modified_time: float
+        self,
+        item_path: str,
+        size_bytes: int | None = None,
+        modified_time: float | None = None,
+        missing: list[int] | None = None,
     ) -> BrowserItem | None:
+        cache_entry = self._sequence_metadata_cache.setdefault(item_path, {})
+        if size_bytes is not None:
+            cache_entry["size_bytes"] = size_bytes
+        if modified_time is not None:
+            cache_entry["modified_time"] = modified_time
+        if missing is not None:
+            cache_entry["missing"] = list(missing)
         for item in self._grouped_items:
             if item.path != item_path:
                 continue
-            item.size_bytes = size_bytes
-            item.modified_time = modified_time
+            if size_bytes is not None:
+                item.size_bytes = size_bytes
+            if modified_time is not None:
+                item.modified_time = modified_time
+            if missing is not None:
+                item.missing = list(missing)
             return item
         return None
 
@@ -122,3 +139,17 @@ class BrowserController:
         self._current_items = (
             self._grouped_items if self._grouped_view else self._raw_items
         )
+
+    def _apply_cached_sequence_metadata(self) -> None:
+        for item in self._grouped_items:
+            if item.item_type is not ItemType.SEQUENCE:
+                continue
+            cached = self._sequence_metadata_cache.get(item.path)
+            if not cached:
+                continue
+            if "size_bytes" in cached:
+                item.size_bytes = int(cached["size_bytes"])
+            if "modified_time" in cached:
+                item.modified_time = float(cached["modified_time"])
+            if "missing" in cached:
+                item.missing = [int(frame) for frame in cached["missing"]]

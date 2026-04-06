@@ -51,7 +51,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from sview.model import BrowserItem, ItemType
+from sview.model import BrowserItem, ItemType, format_frame_ranges
 
 
 class InspectorPanel(QWidget):
@@ -69,6 +69,7 @@ class InspectorPanel(QWidget):
         self._range_value = QLabel("-")
         self._count_value = QLabel("-")
         self._missing_value = QLabel("-")
+        self._missing_value.setWordWrap(True)
         self._padding_value = QLabel("-")
         self._size_value = QLabel("-")
         self._modified_value = QLabel("-")
@@ -86,6 +87,15 @@ class InspectorPanel(QWidget):
         )
         self.close_button.setToolTip("Close inspector")
         self.close_button.setFixedWidth(24)
+        for button in (
+            self.copy_path_button,
+            self.copy_pattern_button,
+            self.find_missing_button,
+            self.get_size_button,
+            self.expand_button,
+        ):
+            button.setMinimumHeight(30)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -185,9 +195,7 @@ class InspectorPanel(QWidget):
         self._type_value.setText(self._type_text(item))
         self._range_value.setText(item.frame_range or "-")
         self._count_value.setText(str(item.count) if item.count else "-")
-        self._missing_value.setText(
-            ", ".join(str(frame) for frame in item.missing) if item.missing else "-"
-        )
+        self._missing_value.setText(format_frame_ranges(item.missing))
         self._padding_value.setText(item.pad or "-")
         self._size_value.setText(self._format_size(item.size_bytes))
         self._modified_value.setText(self._format_modified(item.modified_time))

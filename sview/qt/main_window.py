@@ -82,7 +82,7 @@ from sview.qt.icons import sidebar_icon
 from sview.qt.inspector import InspectorPanel
 from sview.qt.table import ContentsTable
 from sview.qt.tree import DirectoryTree
-from sview.scanner import ScanResult
+from sview.scanner import ScanResult, pyseq
 
 
 class MainWindow(QMainWindow):
@@ -856,6 +856,11 @@ class MainWindow(QMainWindow):
         if data is None:
             return
         missing = self._coerce_missing_list(data.get("missing"))
+        updated_item = self._controller.update_sequence_metadata(
+            item.path, missing=missing or []
+        )
+        if updated_item is not None:
+            item = updated_item
         item.missing = missing or None
         self._table.update_item(item)
         self._inspector.set_item(item)
@@ -873,12 +878,30 @@ class MainWindow(QMainWindow):
         size_bytes = self._coerce_int(data.get("size_bytes")) or self._coerce_int(
             data.get("size")
         )
+        modified_time = item.modified_time
+        if item.child_paths:
+            modified_time = max(
+                (
+                    Path(child_path).stat().st_mtime
+                    for child_path in item.child_paths
+                    if Path(child_path).exists()
+                ),
+                default=modified_time,
+            )
+        updated_item = self._controller.update_sequence_metadata(
+            item.path, size_bytes=size_bytes, modified_time=modified_time
+        )
+        if updated_item is not None:
+            item = updated_item
         if size_bytes is not None:
             item.size_bytes = size_bytes
+        item.modified_time = modified_time
         self._table.update_item(item)
         self._inspector.set_item(item)
         self._update_status_bar()
-        self.statusBar().showMessage(f"Loaded size for {item.display_name}", 3000)
+        self.statusBar().showMessage(
+            f"Loaded size and modified time for {item.display_name}", 3000
+        )
 
     def _open_selected_properties(self) -> None:
         item = self._inspector.current_item or self._current_browser_item()
@@ -1137,8 +1160,9 @@ class MainWindow(QMainWindow):
         executable = self._tool_path("sstat")
         if executable is None:
             return None
+        target = self._sequence_stat_target(item)
         completed = subprocess.run(
-            [executable, item.path, "--json"],
+            [executable, target, "--json"],
             capture_output=True,
             text=True,
             check=False,
@@ -1155,6 +1179,21 @@ class MainWindow(QMainWindow):
                 self, "sstat failed", "Received invalid JSON from sstat."
             )
             return None
+
+    def _sequence_stat_target(self, item: BrowserItem) -> str:
+        if (
+            item.item_type is not ItemType.SEQUENCE
+            or not item.child_paths
+            or pyseq is None
+        ):
+            return item.path
+        try:
+            sequences = pyseq.get_sequences(item.child_paths)
+            if sequences:
+                return sequences[0].format("%D%h%p%t")
+        except Exception:
+            pass
+        return item.path
 
     @staticmethod
     def _coerce_int(value: object) -> int | None:

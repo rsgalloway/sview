@@ -101,3 +101,23 @@ class BrowserItem:
             if data["child_paths"] is not None
             else None,
         )
+
+
+def format_frame_ranges(frames: list[int] | None) -> str:
+    if not frames:
+        return "-"
+
+    ordered = sorted(dict.fromkeys(int(frame) for frame in frames))
+    ranges: list[str] = []
+    start = ordered[0]
+    end = ordered[0]
+
+    for frame in ordered[1:]:
+        if frame == end + 1:
+            end = frame
+            continue
+        ranges.append(str(start) if start == end else f"{start}-{end}")
+        start = end = frame
+
+    ranges.append(str(start) if start == end else f"{start}-{end}")
+    return ", ".join(ranges)

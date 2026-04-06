@@ -38,10 +38,10 @@ from __future__ import annotations
 from datetime import datetime
 
 from PySide6.QtCore import QTimer, Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
-from sview.model import BrowserItem, ItemType
+from sview.model import BrowserItem, ItemType, format_frame_ranges
 from sview.qt.icons import browser_item_icon
 
 
@@ -182,14 +182,26 @@ class ContentsTable(QTableWidget):
             row_browser_item = row_item.data(Qt.ItemDataRole.UserRole)
             if row_browser_item is None or row_browser_item.path != item.path:
                 continue
+            missing_item = self.item(row, 4)
             size_item = self.item(row, 5)
             modified_item = self.item(row, 6)
+            for column in range(self.columnCount()):
+                cell = self.item(row, column)
+                if cell is None:
+                    continue
+                cell.setData(Qt.ItemDataRole.UserRole, item)
+                if item.item_type is ItemType.SEQUENCE and item.missing_count:
+                    cell.setBackground(QColor("#433631"))
+                else:
+                    cell.setBackground(QBrush())
+                if item.item_type is ItemType.DIRECTORY:
+                    cell.setForeground(QColor("#d0d6de"))
             if size_item is not None:
                 size_item.setText(self._format_size(item.size_bytes))
-                size_item.setData(Qt.ItemDataRole.UserRole, item)
+            if missing_item is not None:
+                missing_item.setText(self._missing_label(item))
             if modified_item is not None:
                 modified_item.setText(self._format_mtime(item.modified_time))
-                modified_item.setData(Qt.ItemDataRole.UserRole, item)
             return
 
     def _emit_context_request(self, position) -> None:
@@ -237,10 +249,7 @@ class ContentsTable(QTableWidget):
             return ""
         if not item.missing_count:
             return ""
-        preview = ", ".join(str(frame) for frame in (item.missing or [])[:3])
-        if item.missing_count > 3:
-            preview = f"{preview}, +{item.missing_count - 3}"
-        return preview
+        return format_frame_ranges(item.missing)
 
     @staticmethod
     def _format_size(size_bytes: int) -> str:

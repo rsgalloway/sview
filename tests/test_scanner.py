@@ -142,6 +142,33 @@ class DirectoryScannerTests(unittest.TestCase):
             self.assertEqual(len(collapsed_items), 1)
             self.assertIs(collapsed_items[0].item_type, ItemType.SEQUENCE)
 
+    def test_controller_preserves_sequence_metadata_across_rescan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            _touch(root / "plate.0001.jpg")
+            _touch(root / "plate.0003.jpg")
+
+            controller = BrowserController(scanner=DirectoryScanner())
+            first_items = controller.load_path(root)
+            sequence = next(
+                item for item in first_items if item.item_type is ItemType.SEQUENCE
+            )
+
+            controller.update_sequence_metadata(
+                sequence.path,
+                size_bytes=1234,
+                modified_time=42.0,
+                missing=[2],
+            )
+
+            rescanned_items = controller.load_path(root)
+            refreshed = next(
+                item for item in rescanned_items if item.item_type is ItemType.SEQUENCE
+            )
+            self.assertEqual(refreshed.size_bytes, 1234)
+            self.assertEqual(refreshed.modified_time, 42.0)
+            self.assertEqual(refreshed.missing, [2])
+
     def test_scan_result_round_trip_serialization(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
