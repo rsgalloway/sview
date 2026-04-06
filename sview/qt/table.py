@@ -45,6 +45,22 @@ from sview.model import BrowserItem, ItemType
 from sview.qt.icons import browser_item_icon
 
 
+class BrowserTableItem(QTableWidgetItem):
+    def __lt__(self, other) -> bool:
+        if not isinstance(other, QTableWidgetItem):
+            return super().__lt__(other)
+
+        self_item = self.data(Qt.ItemDataRole.UserRole)
+        other_item = other.data(Qt.ItemDataRole.UserRole)
+        if isinstance(self_item, BrowserItem) and isinstance(other_item, BrowserItem):
+            self_priority = 0 if self_item.item_type is ItemType.DIRECTORY else 1
+            other_priority = 0 if other_item.item_type is ItemType.DIRECTORY else 1
+            if self_priority != other_priority:
+                return self_priority < other_priority
+
+        return self.text().lower() < other.text().lower()
+
+
 class ContentsTable(QTableWidget):
     RENDER_BATCH_SIZE = 100
     context_requested = Signal(object, object)
@@ -100,6 +116,7 @@ class ContentsTable(QTableWidget):
         self._pending_items = list(items)
         self._render_index = 0
         self.clearContents()
+        self.clearSelection()
         self.setSortingEnabled(False)
         self.setRowCount(len(items))
         if not items:
@@ -125,7 +142,7 @@ class ContentsTable(QTableWidget):
             ]
 
             for column, value in enumerate(values):
-                table_item = QTableWidgetItem(value)
+                table_item = BrowserTableItem(value)
                 table_item.setData(Qt.ItemDataRole.UserRole, item)
                 if column == 0:
                     table_item.setIcon(self._item_icon(item))
@@ -145,6 +162,9 @@ class ContentsTable(QTableWidget):
             self.setSortingEnabled(True)
             self.sortItems(0, Qt.SortOrder.AscendingOrder)
             self.horizontalHeader().setSortIndicator(0, Qt.SortOrder.AscendingOrder)
+            if self.rowCount() > 0:
+                self.setCurrentCell(0, 0)
+                self.selectRow(0)
 
     def current_browser_item(self) -> BrowserItem | None:
         selected = self.selectedItems()

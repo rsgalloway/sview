@@ -40,7 +40,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from PySide6.QtCore import QProcess, QTimer, Qt, QUrl
+from PySide6.QtCore import QPoint, QProcess, QTimer, Qt, QUrl
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -54,7 +54,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QStackedWidget,
-    QProgressBar,
     QStyle,
     QToolButton,
     QVBoxLayout,
@@ -109,6 +108,7 @@ class MainWindow(QMainWindow):
         self._load_stderr_partial = ""
         self._load_cancelled = False
         self._load_timed_out = False
+        self._focus_after_load = "browser"
 
         self.setWindowTitle("sview")
         self.resize(1400, 800)
@@ -136,7 +136,10 @@ class MainWindow(QMainWindow):
         self._inspector = InspectorPanel()
         self._tree_title = QLabel("Folders")
         self._tree_toggle = QToolButton()
-        self._tree = DirectoryTree(self._initial_path)
+        self._show_hidden_files = bool(self._ui_state.get("show_hidden_files", False))
+        self._tree = DirectoryTree(
+            self._initial_path, show_hidden=self._show_hidden_files
+        )
         self._main_splitter: QSplitter | None = None
         self._sidebar_expanded = bool(self._ui_state.get("sidebar_expanded", True))
         self._sidebar_restore_width = (
@@ -239,6 +242,11 @@ class MainWindow(QMainWindow):
         self._stop_button.setToolTip("Stop")
         self._stop_button.setFixedWidth(32)
         self._stop_button.setEnabled(False)
+        self._menu_button = QPushButton()
+        self._menu_button.setObjectName("toolbarToggle")
+        self._menu_button.setText("≡")
+        self._menu_button.setToolTip("Menu")
+        self._menu_button.setFixedWidth(32)
 
     def _build_menu_bar(self) -> None:
         menu_bar = self.menuBar()
@@ -254,9 +262,15 @@ class MainWindow(QMainWindow):
         self._edit_copy_path_action = edit_menu.addAction("Copy Path")
         self._edit_copy_pattern_action = edit_menu.addAction("Copy Pattern")
         self._edit_properties_action = edit_menu.addAction("Properties")
+        edit_menu.addSeparator()
+        self._show_hidden_action = edit_menu.addAction("Show Hidden Files")
+        self._show_hidden_action.setCheckable(True)
+        self._show_hidden_action.setChecked(self._show_hidden_files)
+        self._preferences_action = edit_menu.addAction("Preferences")
 
         self._help_about_action = help_menu.addAction("About")
         self._help_repo_action = help_menu.addAction("GitHub Repo")
+        menu_bar.hide()
 
     def _build_layout(self) -> None:
         center = QWidget()
@@ -281,6 +295,7 @@ class MainWindow(QMainWindow):
         )
         toolbar_row.addWidget(self._breadcrumb_bar, 1)
         toolbar_row.addWidget(self._filter_input)
+        toolbar_row.addWidget(self._menu_button)
         root_layout.addLayout(toolbar_row)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -358,10 +373,13 @@ class MainWindow(QMainWindow):
         self._edit_copy_path_action.triggered.connect(self._copy_selected_path)
         self._edit_copy_pattern_action.triggered.connect(self._copy_selected_pattern)
         self._edit_properties_action.triggered.connect(self._open_selected_properties)
+        self._show_hidden_action.toggled.connect(self._toggle_show_hidden_files)
+        self._preferences_action.triggered.connect(self._show_preferences_dialog)
         self._help_repo_action.triggered.connect(self._open_repo_page)
         self._help_about_action.triggered.connect(self._show_about_dialog)
         self._open_button.clicked.connect(self._choose_directory)
         self._refresh_button.clicked.connect(self._refresh_directory)
+        self._menu_button.clicked.connect(self._show_toolbar_menu)
         self._back_button.clicked.connect(self._go_back)
         self._home_button.clicked.connect(self._go_home)
         self._up_button.clicked.connect(self._go_up)
@@ -481,6 +499,7 @@ class MainWindow(QMainWindow):
         index = self._tree.currentIndex()
         path = self._tree.filesystem_model.filePath(index)
         if path:
+            self._focus_after_load = "tree"
             self._request_directory(path, add_to_history=True)
 
     def _request_directory(self, path: str | Path, add_to_history: bool) -> None:
@@ -625,7 +644,11 @@ class MainWindow(QMainWindow):
         self._update_breadcrumbs(result.path)
         self._filter_input.clear()
         self._apply_filter("")
-        QTimer.singleShot(0, self._focus_active_browser)
+        if self._focus_after_load == "tree":
+            QTimer.singleShot(0, self._focus_tree)
+        else:
+            QTimer.singleShot(0, self._focus_active_browser)
+        self._focus_after_load = "browser"
         self._drain_pending_request()
 
     def _handle_failed_scan(self, error_message: str) -> None:
@@ -688,6 +711,8 @@ class MainWindow(QMainWindow):
                 for item in self._controller.current_items
                 if needle in item.display_name.lower()
             ]
+        if not self._show_hidden_files:
+            filtered = [item for item in filtered if not self._is_hidden_item(item)]
 
         self._visible_items = filtered
         self._table.set_items(filtered)
@@ -720,6 +745,43 @@ class MainWindow(QMainWindow):
 
     def _update_filter_clear_action(self, text: str) -> None:
         self._clear_filter_action.setVisible(bool(text))
+
+    def _toggle_show_hidden_files(self, enabled: bool) -> None:
+        self._show_hidden_files = enabled
+        self._tree.set_show_hidden(enabled)
+        self._apply_filter(self._filter_input.text())
+        self._save_ui_state()
+
+    def _show_toolbar_menu(self) -> None:
+        menu = QMenu(self)
+        file_menu = menu.addMenu("File")
+        file_menu.addAction(self._file_open_action)
+        file_menu.addAction(self._file_refresh_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self._file_quit_action)
+
+        edit_menu = menu.addMenu("Edit")
+        edit_menu.addAction(self._edit_copy_path_action)
+        edit_menu.addAction(self._edit_copy_pattern_action)
+        edit_menu.addAction(self._edit_properties_action)
+        menu.addSeparator()
+        menu.addAction(self._show_hidden_action)
+        menu.addAction(self._preferences_action)
+
+        help_menu = menu.addMenu("Help")
+        help_menu.addAction(self._help_repo_action)
+        help_menu.addAction(self._help_about_action)
+        anchor = self._menu_button.mapToGlobal(self._menu_button.rect().bottomRight())
+        menu_size = menu.sizeHint()
+        menu.exec(anchor - QPoint(menu_size.width(), 0))
+
+    def _show_preferences_dialog(self) -> None:
+        QMessageBox.information(
+            self,
+            "Preferences",
+            "Preferences are currently stored in ~/.config/sview.\n\n"
+            "More settings can be added here in a future pass.",
+        )
 
     def _sync_inspector(self) -> None:
         item = self._current_browser_item()
@@ -1155,6 +1217,7 @@ class MainWindow(QMainWindow):
             else "details",
             "sidebar_expanded": self._sidebar_expanded,
             "sidebar_width": sidebar_width,
+            "show_hidden_files": self._show_hidden_files,
         }
         try:
             save_ui_state(state)
@@ -1182,6 +1245,10 @@ class MainWindow(QMainWindow):
         widget = self._center_stack.currentWidget()
         if widget is not None and widget.isEnabled():
             widget.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _focus_tree(self) -> None:
+        if self._tree.isEnabled():
+            self._tree.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _update_breadcrumbs(self, path: Path) -> None:
         while self._breadcrumb_layout.count():
@@ -1217,6 +1284,10 @@ class MainWindow(QMainWindow):
             self._breadcrumb_layout.addWidget(button)
 
         self._breadcrumb_layout.addStretch(1)
+
+    @staticmethod
+    def _is_hidden_item(item: BrowserItem) -> bool:
+        return Path(item.path).name.startswith(".")
 
     def _toggle_sidebar(self, expanded: bool) -> None:
         self._apply_sidebar_state(expanded)

@@ -81,6 +81,8 @@ class ContentsIconView(QListWidget):
             list_item.setSizeHint(QSize(self.CARD_WIDTH - 12, self.CARD_HEIGHT - 10))
             self.addItem(list_item)
             self.setItemWidget(list_item, self._build_card(item))
+        if self.count() > 0:
+            self.setCurrentRow(0)
 
     def current_browser_item(self) -> BrowserItem | None:
         current = self.currentItem()
