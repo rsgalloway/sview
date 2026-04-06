@@ -38,7 +38,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from sview import __version__
@@ -61,10 +61,12 @@ def main() -> int:
         return 1
     app.setApplicationName("sview")
     app.setApplicationVersion(__version__)
+    app.setWindowIcon(_app_icon())
     app.setStyle("Fusion")
     _apply_dark_theme(app)
     initial_path = _parse_initial_path(sys.argv[1:])
     window = MainWindow(initial_path=initial_path, debug=debug)
+    window.setWindowIcon(_app_icon())
     window.show()
     return app.exec()
 
@@ -83,6 +85,10 @@ def _wants_version(args: list[str]) -> bool:
 
 def _wants_debug(args: list[str]) -> bool:
     return "--debug" in args
+
+
+def _app_icon() -> QIcon:
+    return QIcon(str(Path(__file__).with_name("sview_icon.png")))
 
 
 def _apply_dark_theme(app: QApplication) -> None:

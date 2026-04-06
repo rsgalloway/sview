@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 - 2026-04-05
+
+- Added a packaged application icon and surfaced it in the About dialog
+- Continued browser polish around hidden-file controls and tree navigation behavior
+
 ## 0.2.0 - 2026-04-05
 
 - Refined the desktop UI with a darker theme, tighter toolbar, custom item icons, and cleaner loading feedback

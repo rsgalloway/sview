@@ -41,7 +41,7 @@ import subprocess
 import sys
 
 from PySide6.QtCore import QPoint, QProcess, QTimer, Qt, QUrl
-from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QGuiApplication
+from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -1329,11 +1329,23 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl(get_repository_url()))
 
     def _show_about_dialog(self) -> None:
-        QMessageBox.about(
-            self,
-            "About sview",
-            f"sview {__version__}\n\nSequence-aware filesystem browser.",
-        )
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("About sview")
+        dialog.setText(f"sview {__version__}")
+        dialog.setInformativeText("Sequence-aware filesystem browser.")
+        icon_path = Path(__file__).with_name("sview_icon.png")
+        if icon_path.exists():
+            pixmap = QPixmap(str(icon_path))
+            if not pixmap.isNull():
+                dialog.setIconPixmap(
+                    pixmap.scaled(
+                        96,
+                        96,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+        dialog.exec()
 
     def _format_sstat_output(self, raw_output: str) -> str:
         try:
