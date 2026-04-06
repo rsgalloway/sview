@@ -94,6 +94,31 @@ class DirectoryScannerTests(unittest.TestCase):
             self.assertIs(linked_item.item_type, ItemType.DIRECTORY)
             self.assertEqual(linked_item.path, str(link))
 
+    def test_raw_files_and_directories_include_basic_stat_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            folder = root / "folder"
+            folder.mkdir()
+            file_path = root / "notes.txt"
+            _touch(file_path)
+
+            result = DirectoryScanner().scan(root)
+
+            folder_item = next(
+                item for item in result.raw_items if item.name == "folder"
+            )
+            file_item = next(
+                item for item in result.raw_items if item.name == "notes.txt"
+            )
+
+            self.assertIs(folder_item.item_type, ItemType.DIRECTORY)
+            self.assertGreater(folder_item.modified_time, 0.0)
+            self.assertEqual(folder_item.size_bytes, 0)
+
+            self.assertIs(file_item.item_type, ItemType.FILE)
+            self.assertGreater(file_item.modified_time, 0.0)
+            self.assertGreater(file_item.size_bytes, 0)
+
     def test_controller_can_expand_and_collapse_sequence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
