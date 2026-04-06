@@ -207,6 +207,11 @@ class ContentsTable(QTableWidget):
             self.navigate_up_requested.emit()
             event.accept()
             return
+        if event.key() in {Qt.Key.Key_Return, Qt.Key.Key_Enter}:
+            if self.current_browser_item() is not None:
+                self.activate_current_requested.emit()
+            event.accept()
+            return
         if event.key() == Qt.Key.Key_Right:
             current_item = self.current_browser_item()
             if current_item is not None and current_item.item_type is not ItemType.FILE:
